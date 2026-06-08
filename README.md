@@ -7,11 +7,11 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow)](LICENSE)
 
 EcoSentinel connects AI assistants like Claude to real-time environmental data
-from three global sources — live air quality sensors, satellite wildfire
-detection, and weather forecasting — through the Model Context Protocol. It
+from three global sources (live air quality sensors, satellite wildfire
+detection, and weather forecasting) through the Model Context Protocol. It
 goes a step further than simple data-fetching: it **statistically detects**
 when air quality is abnormal for a given city, and is being built out to
-**mathematically attribute** *why* — separating "there's a wildfire nearby"
+**mathematically attribute** *why*, separating "there's a wildfire nearby"
 from "the wildfire is actually causing this spike."
 
 Ask your AI:
@@ -43,22 +43,22 @@ Ask your AI:
 
 ## Why "Hybrid Intelligence"
 
-Most AI projects let the language model do *all* of the reasoning — including
+Most AI projects let the language model do *all* of the reasoning, including
 the math. That's risky, because LLMs hallucinate numbers.
 
 EcoSentinel enforces a strict separation between two kinds of intelligence
 working together:
 
-- **Language model intelligence** — Claude handles natural-language
+- **Language model intelligence**: Claude handles natural-language
   understanding, decides which tools to call and when, and synthesizes the
   results into a clear answer for the user.
-- **Statistical / mathematical intelligence** — Python libraries (`scipy`,
+- **Statistical / mathematical intelligence**: Python libraries (`scipy`,
   `numpy`, and eventually `DoWhy`) handle the actual numerical computation,
   with zero hallucination risk.
 
 Claude decides **what** to analyze; Python computes **how**. When the system
 flags a pollution spike near an active wildfire, it doesn't let Claude *guess*
-whether the fire is the cause — it runs real statistics and causal inference
+whether the fire is the cause. It runs real statistics and causal inference
 in Python and hands Claude a precise, defensible number.
 
 ---
@@ -106,16 +106,16 @@ A typical question moves through the layers like this:
 1. A user asks Claude something like *"What's the air quality in Lagos, and is it normal?"*
 2. Claude inspects the tools EcoSentinel exposes and decides which to call.
 3. The **agentic router** kicks off concurrent calls to all relevant data sources.
-4. `asyncio.gather()` fetches air quality, wildfire, and weather data **simultaneously** — a 3x speedup over sequential calls.
+4. `asyncio.gather()` fetches air quality, wildfire, and weather data **simultaneously**, roughly a 3x speedup over sequential calls.
 5. The **z-score engine** compares today's PM2.5 reading to the city's 30-day historical baseline.
 6. If the z-score crosses the anomaly threshold (`z ≥ 2.0`), the router automatically triggers the causal inference engine.
 7. The **causal engine** constructs a DAG and computes `P(Y | do(X))` via the backdoor criterion to estimate how much of the spike is attributable to a nearby wildfire, after controlling for wind.
-8. If there isn't enough historical data for a confident causal estimate, the system **gracefully degrades** — falling back to the z-score result alone rather than guessing.
+8. If there isn't enough historical data for a confident causal estimate, the system **gracefully degrades**, falling back to the z-score result alone rather than guessing.
 9. Every result is returned to Claude as a structured report.
-10. Claude synthesizes everything into a clear, natural-language answer — grounded entirely in real numbers, not invented ones.
+10. Claude synthesizes everything into a clear, natural-language answer that's grounded entirely in real numbers, not invented ones.
 
-This conditional, decision-driven behavior — *fetch, evaluate, and only escalate
-when the evidence warrants it* — is what makes the router **agentic** rather
+This conditional, decision-driven behavior (fetch, evaluate, and only escalate
+when the evidence warrants it) is what makes the router **agentic** rather
 than a simple fixed pipeline.
 
 ---
@@ -130,7 +130,7 @@ internet connection. MCP is a slot in the door. You slide a question through;
 a program on the other side (`server.py`) fetches the real answer, runs the
 math, and slides the result back. That's the difference between "Claude can
 only repeat what it learned during training" and "Claude can tell you the
-actual AQI in Mumbai right now — and whether that's unusual."
+actual AQI in Mumbai right now, and whether that's unusual."
 
 EcoSentinel is a custom MCP **server**: it exposes a set of *tools* that Claude
 can call whenever a user's question calls for live environmental data or
@@ -149,9 +149,9 @@ statistical analysis.
 | `detect_anomaly` | `city` | OpenAQ historical API + `scipy` z-score analysis | 🔬 In development |
 | `get_causal_attribution` | `city` | All sources + `DoWhy` causal engine | 🧭 Planned |
 
-> Every live tool returns a clean, structured report — AQI calculated from raw
+> Every live tool returns a clean, structured report: AQI calculated from raw
 > pollutant readings, fire hotspots filtered by distance and confidence, and
-> flood/storm risk derived from rainfall and wind-gust thresholds — so Claude
+> flood/storm risk derived from rainfall and wind-gust thresholds, so Claude
 > always answers with real numbers, source citations, and timestamps.
 
 ---
@@ -172,9 +172,9 @@ std deviation → how much PM2.5 typically varies day to day
 
 | Z-score | Meaning |
 |---|---|
-| `z < 1.5` | Normal — no further analysis triggered |
-| `1.5 ≤ z < 2.0` | Elevated — alert issued |
-| `z ≥ 2.0` | **Anomaly confirmed** — the agentic router escalates to the causal engine |
+| `z < 1.5` | Normal, no further analysis triggered |
+| `1.5 ≤ z < 2.0` | Elevated, alert issued |
+| `z ≥ 2.0` | **Anomaly confirmed**, the agentic router escalates to the causal engine |
 
 The engine fetches 30 days of historical PM2.5 averages, computes the mean and
 standard deviation with `numpy`/`scipy`, derives the z-score, and returns a
@@ -188,10 +188,10 @@ Claude can reason over directly.
 ### Correlation isn't causation
 
 Knowing that there's a wildfire *and* high PM2.5 near a city doesn't prove the
-wildfire is the cause — wind direction matters. If the wind is blowing away
+wildfire is the cause. Wind direction matters. If the wind is blowing away
 from the city, the fire can't be responsible, no matter how close it is.
 EcoSentinel uses **`DoWhy`** to mathematically isolate the wildfire's causal
-contribution after controlling for wind — the actual difference between
+contribution after controlling for wind: the actual difference between
 correlation and causation.
 
 ### The causal graph (DAG)
@@ -218,15 +218,15 @@ P(Y | do(X)) = the probability that PM2.5 is high BECAUSE of the wildfire,
 
 ### Observational vs. interventional probability
 
-- **`P(Y\|X)`** — *Given that we observe a wildfire*, what is PM2.5? This
+- **`P(Y\|X)`**: *Given that we observe a wildfire*, what is PM2.5? This
   includes all sorts of indirect, confounded effects.
-- **`P(Y\|do(X))`** — *If we forced a wildfire to exist* and controlled for
+- **`P(Y\|do(X))`**: *If we forced a wildfire to exist* and controlled for
   everything else, what would PM2.5 be? This isolates the **true causal
   effect**.
 
 `DoWhy` identifies and adjusts for confounders using the **backdoor
-criterion**, producing a single number — e.g. `0.73`, meaning *the wildfire
-explains roughly 73% of this pollution spike* — that is mathematically
+criterion**, producing a single number (for example `0.73`, meaning *the
+wildfire explains roughly 73% of this pollution spike*) that is mathematically
 computed, not estimated by an LLM. If there isn't enough data for a confident
 estimate, the system gracefully falls back to the z-score result alone.
 
@@ -285,7 +285,7 @@ Add EcoSentinel to your Claude Desktop config, found at:
 }
 ```
 
-Restart Claude Desktop, and EcoSentinel will appear in the tools panel — ready
+Restart Claude Desktop, and EcoSentinel will appear in the tools panel, ready
 to answer questions about any location on Earth.
 
 ---
@@ -296,15 +296,15 @@ Asking Claude for a crisis summary triggers `get_crisis_summary`, which fans
 out to all three data sources simultaneously and returns something like:
 
 ```
-# 🌍 EcoSentinel Crisis Briefing — Jakarta
+# 🌍 EcoSentinel Crisis Briefing: Jakarta
 *Generated: 2026-06-08 14:32 UTC | Powered by EcoSentinel MCP*
 
 ---
-[Air Quality report — AQI, PM2.5, PM10, NO2, health guidance]
+[Air Quality report: AQI, PM2.5, PM10, NO2, health guidance]
 ---
-[Wildfire report — active hotspots, distance, confidence]
+[Wildfire report: active hotspots, distance, confidence]
 ---
-[Weather & flood risk report — rainfall, wind, 3-day outlook]
+[Weather & flood risk report: rainfall, wind, 3-day outlook]
 ---
 
 ## 📋 Summary
@@ -314,17 +314,17 @@ For emergencies, always contact local authorities.
 
 Running everything concurrently with `asyncio.gather()` means a full briefing
 that would take roughly 9 seconds sequentially (3 APIs × 3 seconds each) comes
-back in about 3 — a 3x speedup, for free.
+back in about 3, roughly a 3x speedup, for free.
 
 ---
 
 ## Data Sources
 
-- **[OpenAQ](https://openaq.org)** — Real-time air quality from a global
+- **[OpenAQ](https://openaq.org)**: Real-time air quality from a global
   network of ground-level sensors (PM2.5, PM10, NO2, CO, O3, SO2).
-- **[NASA FIRMS](https://firms.modaps.eosdis.nasa.gov)** — Near real-time
+- **[NASA FIRMS](https://firms.modaps.eosdis.nasa.gov)**: Near real-time
   satellite wildfire detection via the VIIRS SNPP sensor.
-- **[Open-Meteo](https://open-meteo.com)** — Free weather forecasts,
+- **[Open-Meteo](https://open-meteo.com)**: Free weather forecasts,
   precipitation, and wind data, no API key required.
 
 ---
@@ -334,9 +334,9 @@ back in about 3 — a 3x speedup, for free.
 ```
 ecosentinel/
 ├── src/
-│   ├── server.py        # MCP server — tool definitions & agentic router
+│   ├── server.py        # MCP server: tool definitions and agentic router
 │   ├── anamoly.py       # Z-score anomaly detection engine (scipy/numpy)
-│   └── causal.py        # DoWhy causal inference engine — DAG + P(Y|do(X)) [planned]
+│   └── causal.py        # DoWhy causal inference engine: DAG + P(Y|do(X)) [planned]
 ├── tests/
 │   ├── test_tools.py    # Async unit tests for each live tool
 │   └── test_anomaly.py  # Unit tests verifying z-score math
@@ -369,13 +369,13 @@ MIT. See [LICENSE](LICENSE) for details.
 
 ## Acknowledgements
 
-- **Anthropic** — for the Model Context Protocol
-- **OpenAQ** — for open, global air quality data
-- **NASA FIRMS** — for satellite-based wildfire detection
-- **Open-Meteo** — for free, no-key-required weather data
-- **Microsoft DoWhy** — for making rigorous causal inference accessible in Python
+- **Anthropic**: for the Model Context Protocol
+- **OpenAQ**: for open, global air quality data
+- **NASA FIRMS**: for satellite-based wildfire detection
+- **Open-Meteo**: for free, no-key-required weather data
+- **Microsoft DoWhy**: for making rigorous causal inference accessible in Python
 
 ---
 
-*Built by [Maahi Patel](https://github.com/maahipatel05) — Rice University.*
+*Built by [Maahi Patel](https://github.com/maahipatel05), Rice University.*
 *For emergencies, always contact local authorities. EcoSentinel is a tool for awareness and research, not a substitute for official alerts.*
