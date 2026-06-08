@@ -2,13 +2,13 @@
 EcoSentinel MCP Server
 ======================
 An MCP (Model Context Protocol) server that gives AI assistants real-time
-access to environmental crisis data — air quality, wildfires, and flood risk.
+access to environmental crisis data: air quality, wildfires, and flood risk.
 
 Tools exposed:
   - get_air_quality      : Live AQI + pollutant data for any city
   - get_wildfires        : Active wildfire hotspots near a location
   - get_weather_risk     : Current weather + flood/storm risk
-  - get_crisis_summary   : AI-synthesized environmental briefing for any location
+  - get_crisis_summary   : Full environmental briefing for any location
 """
 
 import os
@@ -20,7 +20,7 @@ from mcp.server.fastmcp import FastMCP
 
 load_dotenv()
 
-# ── MCP server instance ────────────────────────────────────────────────────────
+# MCP server instance
 mcp = FastMCP(
     name="EcoSentinel",
     instructions=(
@@ -38,7 +38,7 @@ METEO_BASE     = "https://api.open-meteo.com/v1"
 GEOCODE_BASE   = "https://geocoding-api.open-meteo.com/v1"
 
 
-# ── Helpers ────────────────────────────────────────────────────────────────────
+# Helpers
 
 async def geocode(city: str) -> tuple[float, float, str]:
     """Return (lat, lon, display_name) for a city string."""
@@ -57,7 +57,6 @@ async def geocode(city: str) -> tuple[float, float, str]:
 
 
 def aqi_label(aqi: float) -> str:
-    """Convert numeric AQI to WHO category label."""
     if aqi <= 50:   return "✅ Good"
     if aqi <= 100:  return "🟡 Moderate"
     if aqi <= 150:  return "🟠 Unhealthy for Sensitive Groups"
@@ -74,7 +73,7 @@ def wind_label(speed_kmh: float) -> str:
     return "⚠️ Storm-force winds"
 
 
-# ── Tool 1: Air Quality ────────────────────────────────────────────────────────
+# Tool 1: Air Quality
 
 @mcp.tool()
 async def get_air_quality(city: str) -> str:
@@ -92,8 +91,21 @@ async def get_air_quality(city: str) -> str:
     except ValueError as e:
         return f"❌ {e}"
 
-    async with httpx.AsyncClient(timeout=15) as client:
-        # Fetch nearest stations within 50 km
+    api_key = os.getenv("OPENAQ_API_KEY", "")
+    headers = {"X-API-Key": api_key} if api_key else {}
+
+    param_labels = {
+        "pm25": "PM2.5 (fine particles)",
+        "pm10": "PM10 (coarse particles)",
+        "no2":  "NO₂ (nitrogen dioxide)",
+        "co":   "CO (carbon monoxide)",
+        "o3":   "O₃ (ozone)",
+        "so2":  "SO₂ (sulphur dioxide)",
+    }
+
+    async with httpx.AsyncClient(timeout=20) as client:
+
+        # Step 1: Find nearby stations
         r = await client.get(
             f"{OPENAQ_BASE}/locations",
             params={
@@ -102,49 +114,67 @@ async def get_air_quality(city: str) -> str:
                 "limit": 5,
                 "order_by": "id",
             },
-            headers={"X-API-Key": os.getenv("OPENAQ_API_KEY", "")},
+            headers=headers,
         )
 
         if r.status_code != 200:
             return f"❌ OpenAQ API error: {r.status_code}. Try a larger city nearby."
 
-        data = r.json()
-        locations = data.get("results", [])
+        locations = r.json().get("results", [])
 
         if not locations:
             return (
-                f"No air quality sensors found within 50 km of **{display_name}**.\n"
+                f"No air quality sensors found within 25 km of **{display_name}**.\n"
                 "Try a larger nearby city."
             )
 
-        # Collect all latest measurements across nearby stations
-        pollutants: dict[str, list[float]] = {}
+        # Step 2: Collect one sensor ID per pollutant type
+        sensor_ids = {}
         station_names = []
 
         for loc in locations[:3]:
             station_names.append(loc.get("name", "Unknown station"))
             for sensor in loc.get("sensors", []):
                 param = sensor.get("parameter", {})
-                name  = param.get("name", "").lower()
-                value = sensor.get("latest", {}).get("value")
-                unit  = param.get("units", "")
-                if value is not None and name in ("pm25", "pm10", "no2", "co", "o3", "so2"):
-                    pollutants.setdefault(name, []).append((value, unit))
+                pname = param.get("name", "").lower()
+                if pname in param_labels and pname not in sensor_ids:
+                    sensor_ids[pname] = (sensor["id"], param.get("units", ""))
+
+        if not sensor_ids:
+            return f"Stations found near **{display_name}** but no compatible sensors detected."
+
+        # Step 3: Fetch latest measurement for each sensor concurrently
+        async def fetch_sensor(pname, sid, unit):
+            try:
+                resp = await client.get(
+                    f"{OPENAQ_BASE}/sensors/{sid}/measurements",
+                    params={"limit": 1, "order_by": "datetime", "sort_order": "desc"},
+                    headers=headers,
+                )
+                if resp.status_code == 200:
+                    results = resp.json().get("results", [])
+                    if results:
+                        val = results[0].get("value")
+                        if val is not None:
+                            return pname, float(val), unit
+            except Exception:
+                pass
+            return pname, None, unit
+
+        tasks = [fetch_sensor(p, sid, unit) for p, (sid, unit) in sensor_ids.items()]
+        raw_results = await asyncio.gather(*tasks)
+        pollutants = {p: (v, u) for p, v, u in raw_results if v is not None}
 
         if not pollutants:
-            return f"Sensors found near **{display_name}** but no recent measurements available."
+            return (
+                f"Stations found near **{display_name}** but readings are older than 24 hours.\n"
+                "This city may have limited real-time coverage on OpenAQ right now."
+            )
 
-        # Average across stations
-        averaged = {
-            k: (sum(v for v, _ in vals) / len(vals), vals[0][1])
-            for k, vals in pollutants.items()
-        }
-
-        # Estimate AQI from PM2.5 if available (EPA standard approximation)
-        pm25_val = averaged.get("pm25", (None,))[0]
+        # Step 4: Estimate AQI from PM2.5
         aqi_str = ""
+        pm25_val = pollutants.get("pm25", (None,))[0]
         if pm25_val is not None:
-            # Simple linear AQI approximation from PM2.5 µg/m³
             if pm25_val <= 12:
                 aqi = pm25_val / 12 * 50
             elif pm25_val <= 35.4:
@@ -158,7 +188,7 @@ async def get_air_quality(city: str) -> str:
             aqi = round(aqi)
             aqi_str = f"\n**Estimated AQI**: {aqi} — {aqi_label(aqi)}"
 
-        # Format output
+        # Step 5: Format output
         lines = [
             f"## 🌫️ Air Quality — {display_name}",
             f"*Data from OpenAQ | {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}*",
@@ -166,16 +196,7 @@ async def get_air_quality(city: str) -> str:
             "\n**Pollutant Levels:**",
         ]
 
-        param_labels = {
-            "pm25": "PM2.5 (fine particles)",
-            "pm10": "PM10 (coarse particles)",
-            "no2":  "NO₂ (nitrogen dioxide)",
-            "co":   "CO (carbon monoxide)",
-            "o3":   "O₃ (ozone)",
-            "so2":  "SO₂ (sulphur dioxide)",
-        }
-
-        for param, (val, unit) in averaged.items():
+        for param, (val, unit) in pollutants.items():
             label = param_labels.get(param, param.upper())
             lines.append(f"  • {label}: **{val:.1f} {unit}**")
 
@@ -188,7 +209,7 @@ async def get_air_quality(city: str) -> str:
         return "\n".join(lines)
 
 
-# ── Tool 2: Wildfires ──────────────────────────────────────────────────────────
+# Tool 2: Wildfires
 
 @mcp.tool()
 async def get_wildfires(
@@ -199,13 +220,12 @@ async def get_wildfires(
     """
     Get active wildfire hotspots detected by NASA satellites near a location.
 
-    Uses NASA FIRMS (Fire Information for Resource Management System) —
-    the same data used by emergency responders worldwide.
+    Uses NASA FIRMS (Fire Information for Resource Management System).
 
     Args:
         city:      City or region to check, e.g. 'Sydney', 'California'
         radius_km: Search radius in km (default 500)
-        days:      How many days back to check (1–10, default 2)
+        days:      How many days back to check (1-10, default 2)
     """
     try:
         lat, lon, display_name = await geocode(city)
@@ -213,8 +233,6 @@ async def get_wildfires(
         return f"❌ {e}"
 
     days = max(1, min(days, 10))
-
-    # NASA FIRMS provides a demo key for testing; real key recommended for production
     api_key = NASA_FIRMS_KEY or "DEMO_KEY"
 
     url = (
@@ -228,7 +246,7 @@ async def get_wildfires(
 
     if r.status_code == 400:
         return (
-            "⚠️ NASA FIRMS API requires a free API key for production use.\n"
+            "⚠️ NASA FIRMS API requires a free API key.\n"
             "Get yours free at: https://firms.modaps.eosdis.nasa.gov/api/area/\n"
             "Then add it to your .env file as NASA_FIRMS_API_KEY=your_key"
         )
@@ -246,20 +264,18 @@ async def get_wildfires(
             "*Source: NASA VIIRS SNPP satellite — firms.modaps.eosdis.nasa.gov*"
         )
 
-    # Parse CSV (skip header)
     hotspots = []
-    header = lines_raw[0].split(",")
     for row in lines_raw[1:]:
         cols = row.split(",")
         if len(cols) < 6:
             continue
         try:
             hotspots.append({
-                "lat":         float(cols[0]),
-                "lon":         float(cols[1]),
-                "brightness":  float(cols[2]),
-                "confidence":  cols[8].strip() if len(cols) > 8 else "n/a",
-                "date":        cols[5].strip() if len(cols) > 5 else "n/a",
+                "lat":        float(cols[0]),
+                "lon":        float(cols[1]),
+                "brightness": float(cols[2]),
+                "confidence": cols[8].strip() if len(cols) > 8 else "n/a",
+                "date":       cols[5].strip() if len(cols) > 5 else "n/a",
             })
         except (ValueError, IndexError):
             continue
@@ -292,15 +308,14 @@ async def get_wildfires(
     return "\n".join(output)
 
 
-# ── Tool 3: Weather & Flood Risk ───────────────────────────────────────────────
+# Tool 3: Weather and Flood Risk
 
 @mcp.tool()
 async def get_weather_risk(city: str) -> str:
     """
     Get current weather conditions and assess flood/storm risk for any city.
 
-    Uses Open-Meteo (free, no API key needed). Returns temperature, rainfall,
-    wind speed, and a risk assessment for flooding and severe weather.
+    Uses Open-Meteo (free, no API key needed).
 
     Args:
         city: City name, e.g. 'Mumbai', 'Houston', 'Bangladesh'
@@ -314,12 +329,12 @@ async def get_weather_risk(city: str) -> str:
         r = await client.get(
             f"{METEO_BASE}/forecast",
             params={
-                "latitude":         lat,
-                "longitude":        lon,
-                "current":          "temperature_2m,precipitation,rain,wind_speed_10m,wind_gusts_10m,weathercode",
-                "daily":            "precipitation_sum,rain_sum,wind_speed_10m_max,weathercode",
-                "forecast_days":    3,
-                "timezone":         "auto",
+                "latitude":      lat,
+                "longitude":     lon,
+                "current":       "temperature_2m,precipitation,rain,wind_speed_10m,wind_gusts_10m,weathercode",
+                "daily":         "precipitation_sum,rain_sum,wind_speed_10m_max,weathercode",
+                "forecast_days": 3,
+                "timezone":      "auto",
             },
         )
         r.raise_for_status()
@@ -328,18 +343,15 @@ async def get_weather_risk(city: str) -> str:
     cur = d.get("current", {})
     daily = d.get("daily", {})
 
-    temp        = cur.get("temperature_2m", "N/A")
-    precip      = cur.get("precipitation", 0)
-    rain        = cur.get("rain", 0)
-    wind        = cur.get("wind_speed_10m", 0)
-    gusts       = cur.get("wind_gusts_10m", 0)
-    wcode       = cur.get("weathercode", 0)
+    temp   = cur.get("temperature_2m", "N/A")
+    precip = cur.get("precipitation", 0)
+    wind   = cur.get("wind_speed_10m", 0)
+    gusts  = cur.get("wind_gusts_10m", 0)
+    wcode  = cur.get("weathercode", 0)
 
-    # 3-day totals
     daily_precip = daily.get("precipitation_sum", [0, 0, 0])
     total_3day   = sum(p for p in daily_precip if p) if daily_precip else 0
 
-    # Risk assessment
     flood_risk = "🟢 Low"
     if total_3day > 100 or precip > 20:
         flood_risk = "🔴 HIGH — significant rainfall, flooding possible"
@@ -352,7 +364,6 @@ async def get_weather_risk(city: str) -> str:
     elif gusts > 60:
         storm_risk = "🟡 Moderate — strong gusts, exercise caution"
 
-    # WMO weather code to description
     wcode_desc = {
         0: "Clear sky", 1: "Mainly clear", 2: "Partly cloudy", 3: "Overcast",
         51: "Light drizzle", 61: "Slight rain", 63: "Moderate rain", 65: "Heavy rain",
@@ -373,7 +384,7 @@ async def get_weather_risk(city: str) -> str:
     ]
 
     days_label = daily.get("time", ["Day 1", "Day 2", "Day 3"])
-    for i, (day, p) in enumerate(zip(days_label[:3], daily_precip[:3])):
+    for day, p in zip(days_label[:3], daily_precip[:3]):
         bar = "█" * min(int((p or 0) / 5), 20)
         lines.append(f"  {day}: {p or 0:.1f} mm  {bar}")
 
@@ -383,13 +394,13 @@ async def get_weather_risk(city: str) -> str:
         f"**Storm risk assessment**: {storm_risk}",
         f"**Total 3-day rainfall**: {total_3day:.1f} mm",
         "",
-        "*Source: Open-Meteo (open-meteo.com) + Open-Meteo Geocoding API*",
+        "*Source: Open-Meteo (open-meteo.com)*",
     ]
 
     return "\n".join(lines)
 
 
-# ── Tool 4: Crisis Summary ─────────────────────────────────────────────────────
+# Tool 4: Crisis Summary
 
 @mcp.tool()
 async def get_crisis_summary(city: str) -> str:
@@ -397,24 +408,20 @@ async def get_crisis_summary(city: str) -> str:
     Generate a comprehensive environmental crisis briefing for any location.
 
     Combines air quality, wildfire, and weather/flood risk data into a single
-    synthesized report. This is the flagship EcoSentinel tool — use it when
-    you need a full environmental picture of a location.
+    synthesized report using all three data sources simultaneously.
 
     Args:
         city: City or region name, e.g. 'Jakarta', 'Cape Town', 'Amazon'
     """
-    # Run all three tools in parallel for speed
-    aq_task      = get_air_quality(city)
-    fire_task    = get_wildfires(city)
-    weather_task = get_weather_risk(city)
-
     air_result, fire_result, weather_result = await asyncio.gather(
-        aq_task, fire_task, weather_task
+        get_air_quality(city),
+        get_wildfires(city),
+        get_weather_risk(city),
     )
 
     timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
 
-    summary = f"""# 🌍 EcoSentinel Crisis Briefing — {city.title()}
+    return f"""# 🌍 EcoSentinel Crisis Briefing — {city.title()}
 *Generated: {timestamp} | Powered by EcoSentinel MCP*
 
 ---
@@ -431,9 +438,9 @@ async def get_crisis_summary(city: str) -> str:
 
 ---
 
-## 📋 Summary & Recommendations
+## 📋 Summary
 
-This briefing combines data from three independent sources:
+Data sources:
 - **OpenAQ** — global ground-level air quality sensors
 - **NASA FIRMS** — satellite-detected wildfire hotspots (VIIRS SNPP)
 - **Open-Meteo** — weather forecast and precipitation data
@@ -441,10 +448,9 @@ This briefing combines data from three independent sources:
 *For emergencies, always contact local authorities. This tool is for awareness and research.*
 *EcoSentinel — github.com/maahipatel05/ecosentinel*
 """
-    return summary
 
 
-# ── Entry point ────────────────────────────────────────────────────────────────
+# Entry point
 
 if __name__ == "__main__":
     print("🌍 EcoSentinel MCP Server starting...")
