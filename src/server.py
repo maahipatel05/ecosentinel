@@ -451,9 +451,66 @@ Data sources:
 """
 
 
-# Entry point
+# ── Tool 5: Anomaly Detection ──────────────────────────────────────────────────
+
+@mcp.tool()
+async def detect_anomaly_tool(city: str) -> str:
+    """
+    Detect whether current PM2.5 air quality is statistically anomalous
+    for a city based on its 30-day historical baseline.
+
+    Uses z-score analysis: compares today's reading to the mean and
+    standard deviation of the last 30 days of sensor data.
+
+    Args:
+        city: City name, e.g. 'Delhi', 'London', 'Ahmedabad'
+    """
+    from anomaly import detect_anomaly
+
+    result = await detect_anomaly(city)
+
+    if result.get("severity") == "ERROR":
+        return f"❌ {result['message']}"
+
+    if not result.get("sufficient_data"):
+        return (
+            f"## 📊 Anomaly Detection — {result.get('city', city)}\n\n"
+            f"⚠️ {result['message']}"
+        )
+
+    severity_icons = {
+        "NORMAL":   "✅",
+        "ELEVATED": "🟡",
+        "ANOMALY":  "🔴",
+        "SEVERE":   "🟣",
+        "CRITICAL": "🚨",
+    }
+
+    icon = severity_icons.get(result["severity"], "⚪")
+
+    lines = [
+        f"## 📊 Anomaly Detection — {result['city']}",
+        f"*Z-score analysis | 30-day baseline | {result.get('timestamp', '')}*",
+        "",
+        f"**Status**: {icon} {result['severity']}",
+        f"**Current PM2.5**: {result['current_pm25']} µg/m³",
+        f"**30-day mean**: {result['mean_30day']} µg/m³",
+        f"**30-day std dev**: {result['std_30day']} µg/m³",
+        f"**Z-score**: {result['z_score']}",
+        f"**Data points used**: {result['data_points']} readings",
+        "",
+        f"**Analysis**: {result['message']}",
+        "",
+        "*Method: Z-score analysis. z > 2.0 = anomaly. z > 3.0 = severe. z > 4.0 = critical.*",
+        "*Source: OpenAQ historical sensor data*",
+    ]
+
+    return "\n".join(lines)
+
+
+# ── Entry point ────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
     print("🌍 EcoSentinel MCP Server starting...")
-    print("   Tools: get_air_quality, get_wildfires, get_weather_risk, get_crisis_summary")
+    print("   Tools: get_air_quality, get_wildfires, get_weather_risk, get_crisis_summary, detect_anomaly_tool")
     mcp.run(transport="stdio")
