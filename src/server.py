@@ -20,6 +20,7 @@ from mcp.server.fastmcp import FastMCP
 import cache as _cache
 
 from pathlib import Path
+
 load_dotenv(Path(__file__).parent.parent / ".env")
 
 # MCP server instance
@@ -41,6 +42,7 @@ GEOCODE_BASE = "https://geocoding-api.open-meteo.com/v1"
 
 
 # Helpers
+
 
 async def geocode(city: str) -> tuple[float, float, str]:
     """Return (lat, lon, display_name) for a city string."""
@@ -92,6 +94,7 @@ def wind_label(speed_kmh: float) -> str:
 
 # Tool 1: Air Quality
 
+
 @mcp.tool()
 async def get_air_quality(city: str) -> str:
     """
@@ -119,10 +122,10 @@ async def get_air_quality(city: str) -> str:
     param_labels = {
         "pm25": "PM2.5 (fine particles)",
         "pm10": "PM10 (coarse particles)",
-        "no2":  "NO₂ (nitrogen dioxide)",
-        "co":   "CO (carbon monoxide)",
-        "o3":   "O₃ (ozone)",
-        "so2":  "SO₂ (sulphur dioxide)",
+        "no2": "NO₂ (nitrogen dioxide)",
+        "co": "CO (carbon monoxide)",
+        "o3": "O₃ (ozone)",
+        "so2": "SO₂ (sulphur dioxide)",
     }
 
     async with httpx.AsyncClient(timeout=20) as client:
@@ -170,8 +173,7 @@ async def get_air_quality(city: str) -> str:
             try:
                 resp = await client.get(
                     f"{OPENAQ_BASE}/sensors/{sid}/measurements",
-                    params={"limit": 1, "order_by": "datetime",
-                        "sort_order": "desc"},
+                    params={"limit": 1, "order_by": "datetime", "sort_order": "desc"},
                     headers=headers,
                 )
                 if resp.status_code == 200:
@@ -184,8 +186,7 @@ async def get_air_quality(city: str) -> str:
                 pass
             return pname, None, unit
 
-        tasks = [fetch_sensor(p, sid, unit)
-                              for p, (sid, unit) in sensor_ids.items()]
+        tasks = [fetch_sensor(p, sid, unit) for p, (sid, unit) in sensor_ids.items()]
         raw_results = await asyncio.gather(*tasks)
         pollutants = {p: (v, u) for p, v, u in raw_results if v is not None}
 
@@ -236,6 +237,7 @@ async def get_air_quality(city: str) -> str:
 
 
 # Tool 2: Wildfires
+
 
 @mcp.tool()
 async def get_wildfires(
@@ -303,18 +305,21 @@ async def get_wildfires(
         if len(cols) < 6:
             continue
         try:
-            hotspots.append({
-                "lat":        float(cols[0]),
-                "lon":        float(cols[1]),
-                "brightness": float(cols[2]),
-                "confidence": cols[8].strip() if len(cols) > 8 else "n/a",
-                "date":       cols[5].strip() if len(cols) > 5 else "n/a",
-            })
+            hotspots.append(
+                {
+                    "lat": float(cols[0]),
+                    "lon": float(cols[1]),
+                    "brightness": float(cols[2]),
+                    "confidence": cols[8].strip() if len(cols) > 8 else "n/a",
+                    "date": cols[5].strip() if len(cols) > 5 else "n/a",
+                }
+            )
         except (ValueError, IndexError):
             continue
 
-    high_conf = [h for h in hotspots if h["confidence"]
-        in ("high", "h", "100", "nominal")]
+    high_conf = [
+        h for h in hotspots if h["confidence"] in ("high", "h", "100", "nominal")
+    ]
 
     output = [
         f"## 🔥 Wildfire Alert — {display_name}",
@@ -326,8 +331,11 @@ async def get_wildfires(
     ]
 
     if len(hotspots) > 0:
-        risk = "🔴 HIGH" if len(hotspots) > 20 else (
-            "🟡 MODERATE" if len(hotspots) > 5 else "🟢 LOW")
+        risk = (
+            "🔴 HIGH"
+            if len(hotspots) > 20
+            else ("🟡 MODERATE" if len(hotspots) > 5 else "🟢 LOW")
+        )
         output.append(f"**Fire risk level**: {risk}")
         output.append("")
         output.append("**Recent hotspots (sample):**")
@@ -339,14 +347,14 @@ async def get_wildfires(
         if len(hotspots) > 8:
             output.append(f"  • ...and {len(hotspots) - 8} more hotspots")
 
-    output.append(
-        "\n*Source: NASA FIRMS VIIRS SNPP — firms.modaps.eosdis.nasa.gov*")
+    output.append("\n*Source: NASA FIRMS VIIRS SNPP — firms.modaps.eosdis.nasa.gov*")
     result = "\n".join(output)
     _cache.set(cache_key, result, _cache.TTL_FIRE)
     return result
 
 
 # Tool 3: Weather and Flood Risk
+
 
 @mcp.tool()
 async def get_weather_risk(city: str) -> str:
@@ -372,12 +380,12 @@ async def get_weather_risk(city: str) -> str:
         r = await client.get(
             f"{METEO_BASE}/forecast",
             params={
-                "latitude":      lat,
-                "longitude":     lon,
-                "current":       "temperature_2m,precipitation,rain,wind_speed_10m,wind_gusts_10m,weathercode",
-                "daily":         "precipitation_sum,rain_sum,wind_speed_10m_max,weathercode",
+                "latitude": lat,
+                "longitude": lon,
+                "current": "temperature_2m,precipitation,rain,wind_speed_10m,wind_gusts_10m,weathercode",
+                "daily": "precipitation_sum,rain_sum,wind_speed_10m_max,weathercode",
                 "forecast_days": 3,
-                "timezone":      "auto",
+                "timezone": "auto",
             },
         )
         r.raise_for_status()
@@ -408,9 +416,18 @@ async def get_weather_risk(city: str) -> str:
         storm_risk = "🟡 Moderate — strong gusts, exercise caution"
 
     wcode_desc = {
-        0: "Clear sky", 1: "Mainly clear", 2: "Partly cloudy", 3: "Overcast",
-        51: "Light drizzle", 61: "Slight rain", 63: "Moderate rain", 65: "Heavy rain",
-        71: "Slight snow", 80: "Rain showers", 95: "Thunderstorm", 99: "Thunderstorm with hail",
+        0: "Clear sky",
+        1: "Mainly clear",
+        2: "Partly cloudy",
+        3: "Overcast",
+        51: "Light drizzle",
+        61: "Slight rain",
+        63: "Moderate rain",
+        65: "Heavy rain",
+        71: "Slight snow",
+        80: "Rain showers",
+        95: "Thunderstorm",
+        99: "Thunderstorm with hail",
     }.get(wcode, f"Code {wcode}")
 
     lines = [
@@ -446,6 +463,7 @@ async def get_weather_risk(city: str) -> str:
 
 
 # Tool 4: Crisis Summary
+
 
 @mcp.tool()
 async def get_crisis_summary(city: str) -> str:
@@ -497,6 +515,7 @@ Data sources:
 
 # ── Tool 5: Anomaly Detection ──────────────────────────────────────────────────
 
+
 @mcp.tool()
 async def detect_anomaly_tool(city: str) -> str:
     """
@@ -523,10 +542,10 @@ async def detect_anomaly_tool(city: str) -> str:
         )
 
     severity_icons = {
-        "NORMAL":   "✅",
+        "NORMAL": "✅",
         "ELEVATED": "🟡",
-        "ANOMALY":  "🔴",
-        "SEVERE":   "🟣",
+        "ANOMALY": "🔴",
+        "SEVERE": "🟣",
         "CRITICAL": "🚨",
     }
 
@@ -554,6 +573,7 @@ async def detect_anomaly_tool(city: str) -> str:
 
 # ── Tool 6: Causal Attribution ────────────────────────────────────────────────
 
+
 @mcp.tool()
 async def get_causal_attribution(city: str) -> str:
     """
@@ -573,8 +593,11 @@ async def get_causal_attribution(city: str) -> str:
 
     result = await run_causal_attribution(city)
 
-    z_line = f"**Z-score (anomaly check)**: {result['z_score']}" if result.get(
-        "z_score") is not None else ""
+    z_line = (
+        f"**Z-score (anomaly check)**: {result['z_score']}"
+        if result.get("z_score") is not None
+        else ""
+    )
 
     if not result.get("sufficient_data"):
         lines = [
@@ -599,7 +622,9 @@ async def get_causal_attribution(city: str) -> str:
     ref_line = ""
     if rt > 0:
         ref_icon = "🟢" if rp == rt else ("🟡" if rp >= rt // 2 else "🔴")
-        ref_line = f"**Causal robustness**: {ref_icon} {rp}/{rt} refutation tests passed"
+        ref_line = (
+            f"**Causal robustness**: {ref_icon} {rp}/{rt} refutation tests passed"
+        )
 
     lines = [
         f"## 🧭 Causal Attribution — {result['city']}",
@@ -630,6 +655,8 @@ async def get_causal_attribution(city: str) -> str:
 
 if __name__ == "__main__":
     print("🌍 EcoSentinel MCP Server starting...")
-    print("   Tools: get_air_quality, get_wildfires, get_weather_risk, "
-          "get_crisis_summary, detect_anomaly_tool, get_causal_attribution")
+    print(
+        "   Tools: get_air_quality, get_wildfires, get_weather_risk, "
+        "get_crisis_summary, detect_anomaly_tool, get_causal_attribution"
+    )
     mcp.run(transport="stdio")
