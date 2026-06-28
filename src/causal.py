@@ -40,15 +40,15 @@ warnings.filterwarnings("ignore")
 
 load_dotenv(Path(__file__).parent.parent / ".env")
 
-OPENAQ_BASE         = "https://api.openaq.org/v3"
-GEOCODE_BASE        = "https://geocoding-api.open-meteo.com/v1"
-METEO_ARCHIVE_BASE  = "https://archive-api.open-meteo.com/v1"
-FIRMS_BASE          = "https://firms.modaps.eosdis.nasa.gov/api/area"
+OPENAQ_BASE = "https://api.openaq.org/v3"
+GEOCODE_BASE = "https://geocoding-api.open-meteo.com/v1"
+METEO_ARCHIVE_BASE = "https://archive-api.open-meteo.com/v1"
+FIRMS_BASE = "https://firms.modaps.eosdis.nasa.gov/api/area"
 
-PAIRED_WINDOW_DAYS     = 20   # how many past days we try to assemble data for
-FIRMS_CHUNK_DAYS       = 5    # NASA FIRMS area API's max day_range per call
+PAIRED_WINDOW_DAYS = 20   # how many past days we try to assemble data for
+FIRMS_CHUNK_DAYS = 5    # NASA FIRMS area API's max day_range per call
 MIN_PAIRED_OBSERVATIONS = 15  # minimum complete days required to run DoWhy
-RETRY_DELAYS           = [1, 2, 4]  # exponential backoff schedule, in seconds
+RETRY_DELAYS = [1, 2, 4]  # exponential backoff schedule, in seconds
 
 
 # ── Helper: retry wrapper with exponential backoff ──────────────────────────
@@ -122,8 +122,8 @@ def haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
     """Great-circle distance between two points, in kilometers."""
     R = 6371.0
     phi1, phi2 = math.radians(lat1), math.radians(lat2)
-    d_phi      = math.radians(lat2 - lat1)
-    d_lambda   = math.radians(lon2 - lon1)
+    d_phi = math.radians(lat2 - lat1)
+    d_lambda = math.radians(lon2 - lon1)
     a = (
         math.sin(d_phi / 2) ** 2
         + math.cos(phi1) * math.cos(phi2) * math.sin(d_lambda / 2) ** 2
@@ -155,17 +155,17 @@ async def fetch_fire_days(
     if cached is not None:
         return cached
     api_key = os.getenv("NASA_FIRMS_API_KEY", "DEMO_KEY")
-    deg     = radius_km / 111.0
-    bbox    = f"{lon - deg:.4f},{lat - deg:.4f},{lon + deg:.4f},{lat + deg:.4f}"
-    today   = datetime.now(timezone.utc).date()
+    deg = radius_km / 111.0
+    bbox = f"{lon - deg:.4f},{lat - deg:.4f},{lon + deg:.4f},{lat + deg:.4f}"
+    today = datetime.now(timezone.utc).date()
 
     days_by_date: dict[str, list[dict]] = {}
 
     offset = 0
     while offset < window_days:
-        chunk    = min(FIRMS_CHUNK_DAYS, window_days - offset)
+        chunk = min(FIRMS_CHUNK_DAYS, window_days - offset)
         end_date = today - timedelta(days=offset)
-        url      = f"{FIRMS_BASE}/csv/{api_key}/VIIRS_SNPP_NRT/{bbox}/{chunk}"
+        url = f"{FIRMS_BASE}/csv/{api_key}/VIIRS_SNPP_NRT/{bbox}/{chunk}"
         if offset > 0:
             url += f"/{end_date.isoformat()}"
 
@@ -228,8 +228,8 @@ async def fetch_wind_daily(
     if r is None or r.status_code != 200:
         return {}
 
-    daily  = r.json().get("daily", {})
-    dates  = daily.get("time", [])
+    daily = r.json().get("daily", {})
+    dates = daily.get("time", [])
     speeds = daily.get("wind_speed_10m_max", [])
     result = {d: s for d, s in zip(dates, speeds) if s is not None}
     if result:
@@ -254,7 +254,7 @@ async def fetch_pm25_daily(
     if cached is not None:
         return cached
 
-    now       = datetime.now(timezone.utc)
+    now = datetime.now(timezone.utc)
     date_from = now - timedelta(days=window_days)
 
     # sort_order="desc" anchors this page of results to "now" and walks
@@ -285,13 +285,13 @@ async def fetch_pm25_daily(
     # the requested window in practice) — never trust it blindly, so we
     # re-filter client-side against the window we actually asked for.
     window_start_str = date_from.date().isoformat()
-    window_end_str    = now.date().isoformat()
+    window_end_str = now.date().isoformat()
 
     by_date: dict[str, list[float]] = {}
     for entry in r.json().get("results", []):
         value = entry.get("value")
-        ts    = (entry.get("period") or {}).get("datetimeFrom") or {}
-        ts    = ts.get("utc")
+        ts = (entry.get("period") or {}).get("datetimeFrom") or {}
+        ts = ts.get("utc")
         if value is None or ts is None or float(value) <= 0:
             continue
         date_str = ts[:10]
@@ -331,7 +331,9 @@ def build_paired_dataset(
         hotspots = fire_days.get(date_str, [])
         if hotspots:
             x_val = max(
-                h["brightness"] / (1.0 + haversine_km(city_lat, city_lon, h["lat"], h["lon"]))
+                h["brightness"] / \
+                    (1.0 + haversine_km(city_lat,
+                     city_lon, h["lat"], h["lon"]))
                 for h in hotspots
             )
         else:
@@ -381,7 +383,8 @@ def run_dowhy_estimate(df: pd.DataFrame) -> float | None:
             outcome="Y",
             graph=gml_graph,
         )
-        identified_estimand = model.identify_effect(proceed_when_unidentifiable=True)
+        identified_estimand = model.identify_effect(
+            proceed_when_unidentifiable=True)
         estimate = model.estimate_effect(
             identified_estimand,
             method_name="backdoor.linear_regression",
@@ -420,7 +423,8 @@ def run_dowhy_refutations(df: pd.DataFrame, ate: float) -> dict:
             outcome="Y",
             graph=_CAUSAL_GRAPH_GML,
         )
-        identified_estimand = model.identify_effect(proceed_when_unidentifiable=True)
+        identified_estimand = model.identify_effect(
+            proceed_when_unidentifiable=True)
         estimate = model.estimate_effect(
             identified_estimand,
             method_name="backdoor.linear_regression",
@@ -439,7 +443,8 @@ def run_dowhy_refutations(df: pd.DataFrame, ate: float) -> dict:
     results = {}
     for name, method in refuter_specs:
         try:
-            ref     = model.refute_estimate(identified_estimand, estimate, method_name=method)
+            ref = model.refute_estimate(
+                identified_estimand, estimate, method_name=method)
             new_ate = float(ref.new_effect)
             if abs(ate) < 1e-6:
                 passed = True
@@ -528,7 +533,8 @@ async def get_causal_attribution(city: str) -> dict:
         fire_days, wind_daily, pm25_daily, current_pm25 = await asyncio.gather(
             fetch_fire_days(client, lat, lon, window_days=PAIRED_WINDOW_DAYS),
             fetch_wind_daily(client, lat, lon, window_days=PAIRED_WINDOW_DAYS),
-            fetch_pm25_daily(client, sensor_id, window_days=PAIRED_WINDOW_DAYS),
+            fetch_pm25_daily(client, sensor_id,
+                             window_days=PAIRED_WINDOW_DAYS),
             fetch_current_pm25(client, sensor_id),
         )
 
@@ -547,16 +553,17 @@ async def get_causal_attribution(city: str) -> dict:
         return _fallback(display_name, anomaly_result, "DoWhy estimation failed on the available data.")
 
     refutation_results = run_dowhy_refutations(df, ate)
-    refutations_passed = sum(1 for r in refutation_results.values() if r.get("passed") is True)
+    refutations_passed = sum(
+        1 for r in refutation_results.values() if r.get("passed") is True)
 
     baseline = float(df["Y"].mean())
-    excess   = max((current_pm25 or 0.0) - baseline, 0.0)
+    excess = max((current_pm25 or 0.0) - baseline, 0.0)
 
     most_recent_date = max(df["date"])
     x_now = float(df.loc[df["date"] == most_recent_date, "X"].iloc[0])
 
     causal_probability = compute_causal_probability(ate, x_now, excess)
-    is_causal          = causal_probability > 0.5
+    is_causal = causal_probability > 0.5
 
     if df["X"].std() < 1e-6:
         confidence = "LOW"

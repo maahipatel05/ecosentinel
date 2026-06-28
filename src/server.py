@@ -34,10 +34,10 @@ mcp = FastMCP(
 )
 
 NASA_FIRMS_KEY = os.getenv("NASA_FIRMS_API_KEY", "")
-OPENAQ_BASE    = "https://api.openaq.org/v3"
-FIRMS_BASE     = "https://firms.modaps.eosdis.nasa.gov/api/area"
-METEO_BASE     = "https://api.open-meteo.com/v1"
-GEOCODE_BASE   = "https://geocoding-api.open-meteo.com/v1"
+OPENAQ_BASE = "https://api.openaq.org/v3"
+FIRMS_BASE = "https://firms.modaps.eosdis.nasa.gov/api/area"
+METEO_BASE = "https://api.open-meteo.com/v1"
+GEOCODE_BASE = "https://geocoding-api.open-meteo.com/v1"
 
 
 # Helpers
@@ -65,19 +65,28 @@ async def geocode(city: str) -> tuple[float, float, str]:
 
 
 def aqi_label(aqi: float) -> str:
-    if aqi <= 50:   return "✅ Good"
-    if aqi <= 100:  return "🟡 Moderate"
-    if aqi <= 150:  return "🟠 Unhealthy for Sensitive Groups"
-    if aqi <= 200:  return "🔴 Unhealthy"
-    if aqi <= 300:  return "🟣 Very Unhealthy"
+    if aqi <= 50:
+        return "✅ Good"
+    if aqi <= 100:
+        return "🟡 Moderate"
+    if aqi <= 150:
+        return "🟠 Unhealthy for Sensitive Groups"
+    if aqi <= 200:
+        return "🔴 Unhealthy"
+    if aqi <= 300:
+        return "🟣 Very Unhealthy"
     return "🟤 Hazardous"
 
 
 def wind_label(speed_kmh: float) -> str:
-    if speed_kmh < 20:  return "Calm"
-    if speed_kmh < 40:  return "Breezy"
-    if speed_kmh < 60:  return "Windy"
-    if speed_kmh < 90:  return "Strong winds"
+    if speed_kmh < 20:
+        return "Calm"
+    if speed_kmh < 40:
+        return "Breezy"
+    if speed_kmh < 60:
+        return "Windy"
+    if speed_kmh < 90:
+        return "Strong winds"
     return "⚠️ Storm-force winds"
 
 
@@ -161,7 +170,8 @@ async def get_air_quality(city: str) -> str:
             try:
                 resp = await client.get(
                     f"{OPENAQ_BASE}/sensors/{sid}/measurements",
-                    params={"limit": 1, "order_by": "datetime", "sort_order": "desc"},
+                    params={"limit": 1, "order_by": "datetime",
+                        "sort_order": "desc"},
                     headers=headers,
                 )
                 if resp.status_code == 200:
@@ -174,7 +184,8 @@ async def get_air_quality(city: str) -> str:
                 pass
             return pname, None, unit
 
-        tasks = [fetch_sensor(p, sid, unit) for p, (sid, unit) in sensor_ids.items()]
+        tasks = [fetch_sensor(p, sid, unit)
+                              for p, (sid, unit) in sensor_ids.items()]
         raw_results = await asyncio.gather(*tasks)
         pollutants = {p: (v, u) for p, v, u in raw_results if v is not None}
 
@@ -302,7 +313,8 @@ async def get_wildfires(
         except (ValueError, IndexError):
             continue
 
-    high_conf = [h for h in hotspots if h["confidence"] in ("high", "h", "100", "nominal")]
+    high_conf = [h for h in hotspots if h["confidence"]
+        in ("high", "h", "100", "nominal")]
 
     output = [
         f"## 🔥 Wildfire Alert — {display_name}",
@@ -314,7 +326,8 @@ async def get_wildfires(
     ]
 
     if len(hotspots) > 0:
-        risk = "🔴 HIGH" if len(hotspots) > 20 else ("🟡 MODERATE" if len(hotspots) > 5 else "🟢 LOW")
+        risk = "🔴 HIGH" if len(hotspots) > 20 else (
+            "🟡 MODERATE" if len(hotspots) > 5 else "🟢 LOW")
         output.append(f"**Fire risk level**: {risk}")
         output.append("")
         output.append("**Recent hotspots (sample):**")
@@ -326,7 +339,8 @@ async def get_wildfires(
         if len(hotspots) > 8:
             output.append(f"  • ...and {len(hotspots) - 8} more hotspots")
 
-    output.append("\n*Source: NASA FIRMS VIIRS SNPP — firms.modaps.eosdis.nasa.gov*")
+    output.append(
+        "\n*Source: NASA FIRMS VIIRS SNPP — firms.modaps.eosdis.nasa.gov*")
     result = "\n".join(output)
     _cache.set(cache_key, result, _cache.TTL_FIRE)
     return result
@@ -372,14 +386,14 @@ async def get_weather_risk(city: str) -> str:
     cur = d.get("current", {})
     daily = d.get("daily", {})
 
-    temp   = cur.get("temperature_2m", "N/A")
+    temp = cur.get("temperature_2m", "N/A")
     precip = cur.get("precipitation", 0)
-    wind   = cur.get("wind_speed_10m", 0)
-    gusts  = cur.get("wind_gusts_10m", 0)
-    wcode  = cur.get("weathercode", 0)
+    wind = cur.get("wind_speed_10m", 0)
+    gusts = cur.get("wind_gusts_10m", 0)
+    wcode = cur.get("weathercode", 0)
 
     daily_precip = daily.get("precipitation_sum", [0, 0, 0])
-    total_3day   = sum(p for p in daily_precip if p) if daily_precip else 0
+    total_3day = sum(p for p in daily_precip if p) if daily_precip else 0
 
     flood_risk = "🟢 Low"
     if total_3day > 100 or precip > 20:
@@ -559,7 +573,8 @@ async def get_causal_attribution(city: str) -> str:
 
     result = await run_causal_attribution(city)
 
-    z_line = f"**Z-score (anomaly check)**: {result['z_score']}" if result.get("z_score") is not None else ""
+    z_line = f"**Z-score (anomaly check)**: {result['z_score']}" if result.get(
+        "z_score") is not None else ""
 
     if not result.get("sufficient_data"):
         lines = [
@@ -572,12 +587,12 @@ async def get_causal_attribution(city: str) -> str:
         return "\n".join(lines)
 
     conf_icons = {"HIGH": "🟢", "MEDIUM": "🟡", "LOW": "🔴", "N/A": "⚪"}
-    conf_icon  = conf_icons.get(result["confidence"], "⚪")
+    conf_icon = conf_icons.get(result["confidence"], "⚪")
 
-    pct        = round(result["causal_probability"] * 100, 1)
+    pct = round(result["causal_probability"] * 100, 1)
     bar_filled = int(pct / 5)
-    bar        = "█" * bar_filled + "░" * (20 - bar_filled)
-    verdict    = "🔥 CAUSAL" if result["is_causal"] else "❄️ NOT CAUSAL"
+    bar = "█" * bar_filled + "░" * (20 - bar_filled)
+    verdict = "🔥 CAUSAL" if result["is_causal"] else "❄️ NOT CAUSAL"
 
     rp = result.get("refutations_passed", 0)
     rt = result.get("total_refutations", 0)
