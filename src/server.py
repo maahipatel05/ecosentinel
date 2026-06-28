@@ -17,6 +17,7 @@ import asyncio
 from datetime import datetime, timezone
 from dotenv import load_dotenv
 from mcp.server.fastmcp import FastMCP
+import cache as _cache
 
 from pathlib import Path
 load_dotenv(Path(__file__).parent.parent / ".env")
@@ -43,6 +44,10 @@ GEOCODE_BASE   = "https://geocoding-api.open-meteo.com/v1"
 
 async def geocode(city: str) -> tuple[float, float, str]:
     """Return (lat, lon, display_name) for a city string."""
+    key = f"geocode:{city.lower().strip()}"
+    cached = _cache.get(key)
+    if cached is not None:
+        return cached
     async with httpx.AsyncClient(timeout=10) as client:
         r = await client.get(
             f"{GEOCODE_BASE}/search",
@@ -54,7 +59,9 @@ async def geocode(city: str) -> tuple[float, float, str]:
             raise ValueError(f"Location not found: '{city}'")
         hit = results[0]
         name = f"{hit.get('name', city)}, {hit.get('country', '')}"
-        return hit["latitude"], hit["longitude"], name
+        result = hit["latitude"], hit["longitude"], name
+        _cache.set(key, result, _cache.TTL_GEOCODE)
+        return result
 
 
 def aqi_label(aqi: float) -> str:
@@ -87,6 +94,11 @@ async def get_air_quality(city: str) -> str:
     Args:
         city: City name, e.g. 'Delhi', 'London', 'Los Angeles'
     """
+    cache_key = f"tool:air_quality:{city.lower().strip()}"
+    cached = _cache.get(cache_key)
+    if cached is not None:
+        return cached
+
     try:
         lat, lon, display_name = await geocode(city)
     except ValueError as e:
@@ -207,7 +219,9 @@ async def get_air_quality(city: str) -> str:
             "\n*Source: OpenAQ global sensor network — openaq.org*",
         ]
 
-        return "\n".join(lines)
+        result = "\n".join(lines)
+        _cache.set(cache_key, result, _cache.TTL_TOOL)
+        return result
 
 
 # Tool 2: Wildfires
@@ -228,6 +242,11 @@ async def get_wildfires(
         radius_km: Search radius in km (default 500)
         days:      How many days back to check (1-10, default 2)
     """
+    cache_key = f"tool:wildfires:{city.lower().strip()}:{radius_km}:{days}"
+    cached = _cache.get(cache_key)
+    if cached is not None:
+        return cached
+
     try:
         lat, lon, display_name = await geocode(city)
     except ValueError as e:
@@ -258,12 +277,14 @@ async def get_wildfires(
     lines_raw = r.text.strip().split("\n")
 
     if len(lines_raw) <= 1:
-        return (
+        result = (
             f"## 🔥 Wildfires near {display_name}\n"
             f"*NASA FIRMS | Last {days} day(s) | {radius_km} km radius*\n\n"
             f"✅ **No active fire hotspots detected** within {radius_km} km.\n"
             "*Source: NASA VIIRS SNPP satellite — firms.modaps.eosdis.nasa.gov*"
         )
+        _cache.set(cache_key, result, _cache.TTL_FIRE)
+        return result
 
     hotspots = []
     for row in lines_raw[1:]:
@@ -306,7 +327,9 @@ async def get_wildfires(
             output.append(f"  • ...and {len(hotspots) - 8} more hotspots")
 
     output.append("\n*Source: NASA FIRMS VIIRS SNPP — firms.modaps.eosdis.nasa.gov*")
-    return "\n".join(output)
+    result = "\n".join(output)
+    _cache.set(cache_key, result, _cache.TTL_FIRE)
+    return result
 
 
 # Tool 3: Weather and Flood Risk
@@ -321,6 +344,11 @@ async def get_weather_risk(city: str) -> str:
     Args:
         city: City name, e.g. 'Mumbai', 'Houston', 'Bangladesh'
     """
+    cache_key = f"tool:weather_risk:{city.lower().strip()}"
+    cached = _cache.get(cache_key)
+    if cached is not None:
+        return cached
+
     try:
         lat, lon, display_name = await geocode(city)
     except ValueError as e:
@@ -398,7 +426,9 @@ async def get_weather_risk(city: str) -> str:
         "*Source: Open-Meteo (open-meteo.com)*",
     ]
 
-    return "\n".join(lines)
+    result = "\n".join(lines)
+    _cache.set(cache_key, result, _cache.TTL_TOOL)
+    return result
 
 
 # Tool 4: Crisis Summary
@@ -508,9 +538,83 @@ async def detect_anomaly_tool(city: str) -> str:
     return "\n".join(lines)
 
 
+# ── Tool 6: Causal Attribution ────────────────────────────────────────────────
+
+@mcp.tool()
+async def get_causal_attribution(city: str) -> str:
+    """
+    Determine whether a wildfire is causally responsible for a city's
+    current PM2.5 anomaly, using DoWhy causal inference (not correlation).
+
+    Builds ~20 days of real paired daily observations (wildfire intensity,
+    wind speed, PM2.5) and applies the backdoor criterion to estimate
+    P(Y | do(X)): how much of today's PM2.5 is actually caused by nearby
+    wildfire smoke, after controlling for wind. Falls back to a z-score
+    anomaly check if there isn't enough paired data for a valid estimate.
+
+    Args:
+        city: City name, e.g. 'Delhi', 'Sydney', 'Jakarta'
+    """
+    from causal import get_causal_attribution as run_causal_attribution
+
+    result = await run_causal_attribution(city)
+
+    z_line = f"**Z-score (anomaly check)**: {result['z_score']}" if result.get("z_score") is not None else ""
+
+    if not result.get("sufficient_data"):
+        lines = [
+            f"## 🧭 Causal Attribution — {result.get('city', city)}",
+            "",
+            f"⚠️ {result['message']}",
+        ]
+        if z_line:
+            lines += ["", z_line]
+        return "\n".join(lines)
+
+    conf_icons = {"HIGH": "🟢", "MEDIUM": "🟡", "LOW": "🔴", "N/A": "⚪"}
+    conf_icon  = conf_icons.get(result["confidence"], "⚪")
+
+    pct        = round(result["causal_probability"] * 100, 1)
+    bar_filled = int(pct / 5)
+    bar        = "█" * bar_filled + "░" * (20 - bar_filled)
+    verdict    = "🔥 CAUSAL" if result["is_causal"] else "❄️ NOT CAUSAL"
+
+    rp = result.get("refutations_passed", 0)
+    rt = result.get("total_refutations", 0)
+    ref_line = ""
+    if rt > 0:
+        ref_icon = "🟢" if rp == rt else ("🟡" if rp >= rt // 2 else "🔴")
+        ref_line = f"**Causal robustness**: {ref_icon} {rp}/{rt} refutation tests passed"
+
+    lines = [
+        f"## 🧭 Causal Attribution — {result['city']}",
+        f"*{result['method']} | {result['timestamp']}*",
+        "",
+        f"**Wildfire causal probability**: {pct}% [{verdict}]",
+        f"  [{bar}] {pct}%",
+        "",
+        f"**Average Treatment Effect (ATE)**: {result['ate']} µg/m³ per unit fire intensity",
+        f"**Paired daily observations used**: {result['paired_observations']}",
+        *([z_line] if z_line else []),
+        "",
+        f"**Confidence**: {conf_icon} {result['confidence']}",
+        *([ref_line] if ref_line else []),
+        "",
+        f"**Verdict**: {result['message']}",
+        "",
+        "*Method: DoWhy causal inference, DAG with backdoor criterion.*",
+        "*Variables: X = wildfire intensity (treatment), Y = PM2.5 (outcome), "
+        "W = wind speed (confounder)*",
+        "*Sources: OpenAQ (PM2.5), NASA FIRMS (fires), Open-Meteo (wind, archive)*",
+    ]
+
+    return "\n".join(lines)
+
+
 # ── Entry point ────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
     print("🌍 EcoSentinel MCP Server starting...")
-    print("   Tools: get_air_quality, get_wildfires, get_weather_risk, get_crisis_summary, detect_anomaly_tool")
+    print("   Tools: get_air_quality, get_wildfires, get_weather_risk, "
+          "get_crisis_summary, detect_anomaly_tool, get_causal_attribution")
     mcp.run(transport="stdio")

@@ -19,6 +19,7 @@ from scipy import stats
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from dotenv import load_dotenv
+import cache as _cache
 
 # Load API keys using absolute path so this works
 # regardless of where it is launched from
@@ -35,6 +36,10 @@ Z_THRESHOLD_ANOM = 2.0  # above this: confirmed anomaly
 
 async def geocode(city: str) -> tuple[float, float, str]:
     """Convert city name to (lat, lon, display_name)."""
+    key = f"geocode:{city.lower().strip()}"
+    cached = _cache.get(key)
+    if cached is not None:
+        return cached
     async with httpx.AsyncClient(timeout=10) as client:
         r = await client.get(
             f"{GEOCODE_BASE}/search",
@@ -45,20 +50,34 @@ async def geocode(city: str) -> tuple[float, float, str]:
         if not results:
             raise ValueError(f"Location not found: '{city}'")
         hit = results[0]
-        return (
+        result = (
             hit["latitude"],
             hit["longitude"],
             f"{hit.get('name', city)}, {hit.get('country', '')}",
         )
+        _cache.set(key, result, _cache.TTL_GEOCODE)
+        return result
 
 
 # ── Helper: fetch PM2.5 sensor ID near a location ─────────────────────────────
 
+MAX_SENSOR_STALENESS_DAYS = 30  # skip locations that haven't reported in this long
+
+
 async def find_pm25_sensor(client: httpx.AsyncClient, lat: float, lon: float) -> int | None:
     """
-    Find the nearest station that has a PM2.5 sensor.
-    Returns the sensor ID, or None if not found.
+    Find the nearest ACTIVE station that has a PM2.5 sensor.
+
+    Many stations returned by the OpenAQ /locations search are
+    decommissioned (some haven't reported since 2016-2017) but still show
+    up in results. We use each location's own datetimeLast field to skip
+    stale ones, so we don't hand back a sensor ID with no recent data.
+    Returns the sensor ID, or None if no active PM2.5 sensor is found.
     """
+    key = f"sensor:{lat:.4f},{lon:.4f}"
+    cached = _cache.get(key)
+    if cached is not None:
+        return cached
     headers = _auth_headers()
 
     r = await client.get(
@@ -66,8 +85,8 @@ async def find_pm25_sensor(client: httpx.AsyncClient, lat: float, lon: float) ->
         params={
             "coordinates": f"{lat},{lon}",
             "radius":      25000,
-            "limit":       5,
-            "order_by":    "id",
+            "limit":       20,  # wide enough to usually find an active station even
+            "order_by":    "id",  # though order_by="id" surfaces oldest-registered (often defunct) ones first
         },
         headers=headers,
     )
@@ -75,12 +94,34 @@ async def find_pm25_sensor(client: httpx.AsyncClient, lat: float, lon: float) ->
     if r.status_code != 200:
         return None
 
-    for loc in r.json().get("results", []):
-        for sensor in loc.get("sensors", []):
-            if sensor.get("parameter", {}).get("name", "").lower() == "pm25":
-                return sensor["id"]
+    cutoff = datetime.now(timezone.utc) - timedelta(days=MAX_SENSOR_STALENESS_DAYS)
+    fallback_sensor_id = None  # used only if every location turns out stale
 
-    return None
+    for loc in r.json().get("results", []):
+        last_str = (loc.get("datetimeLast") or {}).get("utc")
+        is_active = False
+        if last_str:
+            try:
+                last_dt = datetime.fromisoformat(last_str.replace("Z", "+00:00"))
+                is_active = last_dt >= cutoff
+            except ValueError:
+                is_active = False
+
+        for sensor in loc.get("sensors") or []:
+            if (sensor.get("parameter") or {}).get("name", "").lower() == "pm25":
+                if is_active:
+                    _cache.set(key, sensor["id"], _cache.TTL_SENSOR_ID)
+                    return sensor["id"]
+                if fallback_sensor_id is None:
+                    fallback_sensor_id = sensor["id"]
+
+    # No active sensor found nearby — return the first stale one we saw so
+    # callers still get *something* (and their own data-sufficiency checks
+    # will correctly report "not enough data" rather than us silently
+    # returning None and masking the real reason).
+    if fallback_sensor_id is not None:
+        _cache.set(key, fallback_sensor_id, _cache.TTL_SENSOR_ID)
+    return fallback_sensor_id
 
 
 # ── Helper: auth headers ───────────────────────────────────────────────────────
@@ -102,6 +143,11 @@ async def fetch_pm25_history(
     Fetch the last N days of PM2.5 readings for a specific sensor.
     Returns a list of float values. Empty list if unavailable.
     """
+    key = f"pm25_history:{sensor_id}:{days}"
+    cached = _cache.get(key)
+    if cached is not None:
+        return cached
+
     date_to   = datetime.now(timezone.utc)
     date_from = date_to - timedelta(days=days)
 
@@ -121,11 +167,14 @@ async def fetch_pm25_history(
         return []
 
     results = r.json().get("results", [])
-    return [
+    values = [
         float(entry["value"])
         for entry in results
         if entry.get("value") is not None and float(entry["value"]) > 0
     ]
+    if values:
+        _cache.set(key, values, _cache.TTL_HISTORY)
+    return values
 
 
 # ── Helper: fetch current PM2.5 reading ───────────────────────────────────────
@@ -138,6 +187,11 @@ async def fetch_current_pm25(
     Fetch the single most recent PM2.5 reading for a sensor.
     Returns a float, or None if unavailable.
     """
+    key = f"pm25_current:{sensor_id}"
+    cached = _cache.get(key)
+    if cached is not None:
+        return cached
+
     r = await client.get(
         f"{OPENAQ_BASE}/sensors/{sensor_id}/measurements",
         params={
@@ -156,7 +210,10 @@ async def fetch_current_pm25(
         return None
 
     val = results[0].get("value")
-    return float(val) if val is not None else None
+    result = float(val) if val is not None else None
+    if result is not None:
+        _cache.set(key, result, _cache.TTL_CURRENT)
+    return result
 
 
 # ── Core function: detect_anomaly ─────────────────────────────────────────────
