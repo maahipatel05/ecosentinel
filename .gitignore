@@ -31,3 +31,8 @@ htmlcov/
 
 # Documentation and explanations
 understanding/
+
+# Trained model weights (large binary files — regenerate with train_forecast.py)
+data/model/*.pt
+data/model/*.bin
+data/model/*.pth
