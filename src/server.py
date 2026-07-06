@@ -651,12 +651,70 @@ async def get_causal_attribution(city: str) -> str:
     return "\n".join(lines)
 
 
+# ── Tool 7: PM2.5 Forecast ────────────────────────────────────────────────────
+
+
+@mcp.tool()
+async def get_forecast(city: str) -> str:
+    """
+    Predict tomorrow's PM2.5 air quality for any city using a trained LSTM model.
+
+    The LSTM was trained on 1 year of PM2.5 + weather data (Open-Meteo CAMS)
+    across Delhi, Los Angeles, Seoul, and Krakow, then evaluated against
+    persistence and rolling-average baselines.
+
+    Requires the model to be trained first:
+        python3 scripts/train_forecast.py
+
+    Args:
+        city: City name, e.g. 'Delhi', 'Seoul', 'London'
+    """
+    from forecast import predict_next_day
+
+    try:
+        result = await predict_next_day(city)
+    except FileNotFoundError as e:
+        return f"❌ Model not trained yet.\n{e}"
+    except ValueError as e:
+        return f"❌ {e}"
+    except Exception as e:
+        return f"❌ Forecast error: {e}"
+
+    pm25  = result["predicted_pm25"]
+    risk  = result["risk_level"]
+    name  = result["city"]
+    model = result["model"]
+    seq   = result["seq_len"]
+
+    risk_icons = {
+        "Good":                              "✅",
+        "Moderate":                          "🟡",
+        "Unhealthy for Sensitive Groups":    "🟠",
+        "Unhealthy":                         "🔴",
+        "Very Unhealthy":                    "🟣",
+        "Hazardous":                         "🚨",
+    }
+    icon = risk_icons.get(risk, "⚪")
+
+    lines = [
+        f"## 🔮 PM2.5 Forecast — {name}",
+        f"*{model} | Based on last {seq} days | Open-Meteo CAMS data*",
+        "",
+        f"**Tomorrow's predicted PM2.5**: {pm25} µg/m³",
+        f"**Risk level**: {icon} {risk}",
+        "",
+        "*Source: LSTM model trained on Open-Meteo CAMS historical data.*",
+        "*For fine-tuned TimesFM forecasting, see Phase 6B (LoRA fine-tuning).*",
+    ]
+    return "\n".join(lines)
+
+
 # ── Entry point ────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
     print("🌍 EcoSentinel MCP Server starting...")
     print(
         "   Tools: get_air_quality, get_wildfires, get_weather_risk, "
-        "get_crisis_summary, detect_anomaly_tool, get_causal_attribution"
+        "get_crisis_summary, detect_anomaly_tool, get_causal_attribution, get_forecast"
     )
     mcp.run(transport="stdio")
