@@ -36,3 +36,6 @@ understanding/
 data/model/*.pt
 data/model/*.bin
 data/model/*.pth
+
+# Google ADK local session history (created by adk web)
+.adk/
