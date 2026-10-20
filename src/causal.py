@@ -33,7 +33,13 @@ from pathlib import Path
 from dotenv import load_dotenv
 from dowhy import CausalModel
 
-from anomaly import find_pm25_sensor, fetch_current_pm25, detect_anomaly
+from anomaly import (
+    find_pm25_sensor,
+    fetch_current_pm25,
+    detect_anomaly,
+    PAGE_LIMIT,
+    MAX_PAGES,
+)
 import cache as _cache
 
 warnings.filterwarnings("ignore")
@@ -266,38 +272,40 @@ async def fetch_pm25_daily(
     now = datetime.now(timezone.utc)
     date_from = now - timedelta(days=window_days)
 
-    # sort_order="desc" anchors this page of results to "now" and walks
-    # backward. We deliberately do NOT rely on date_from/date_to alone to
-    # scope the window: OpenAQ v3's date filtering has proven unreliable in
-    # practice (it has returned data over a year outside the requested
-    # range), and with sort_order="asc" a frequently-reporting sensor can
-    # exhaust the 1000-row limit before ever reaching recent dates. Walking
-    # backward from "now" guarantees whatever we get is the most recent
-    # data available, even if date filtering silently does nothing.
-    r = await _get_with_retry(
-        client,
-        f"{OPENAQ_BASE}/sensors/{sensor_id}/measurements",
-        params={
-            "date_from": date_from.strftime("%Y-%m-%dT%H:%M:%SZ"),
-            "date_to": now.strftime("%Y-%m-%dT%H:%M:%SZ"),
-            "limit": 1000,
-            "order_by": "datetime",
-            "sort_order": "desc",
-        },
-        headers=_auth_headers(),
-    )
-    if r is None or r.status_code != 200:
+    # OpenAQ v3's /measurements only accepts datetime_from, datetime_to,
+    # limit and page. Unknown names (date_from, order_by, sort_order) are
+    # silently ignored, and the sensor's OLDEST readings come back instead,
+    # which is why this window used to look "unreliable" and produced 0
+    # paired days. Results come oldest first and some sensors report several
+    # times an hour, so page through until a short page (capped at MAX_PAGES).
+    results = []
+    for page in range(1, MAX_PAGES + 1):
+        r = await _get_with_retry(
+            client,
+            f"{OPENAQ_BASE}/sensors/{sensor_id}/measurements",
+            params={
+                "datetime_from": date_from.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                "datetime_to": now.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                "limit": PAGE_LIMIT,
+                "page": page,
+            },
+            headers=_auth_headers(),
+        )
+        if r is None or r.status_code != 200:
+            break
+        batch = r.json().get("results", [])
+        results.extend(batch)
+        if len(batch) < PAGE_LIMIT:
+            break
+    if not results:
         return {}
 
-    # Defensive check: OpenAQ v3's date_from/date_to filtering has proven
-    # unreliable for some sensors (it has returned data over a year outside
-    # the requested window in practice) — never trust it blindly, so we
-    # re-filter client-side against the window we actually asked for.
+    # Defensive: still re-filter client-side against the window we asked for.
     window_start_str = date_from.date().isoformat()
     window_end_str = now.date().isoformat()
 
     by_date: dict[str, list[float]] = {}
-    for entry in r.json().get("results", []):
+    for entry in results:
         value = entry.get("value")
         ts = (entry.get("period") or {}).get("datetimeFrom") or {}
         ts = ts.get("utc")

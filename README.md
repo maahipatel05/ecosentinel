@@ -14,7 +14,7 @@
 [![PyTorch](https://img.shields.io/badge/Forecast-PyTorch%20LSTM-EE4C2C?logo=pytorch)](https://pytorch.org)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow)](LICENSE)
 
-| 🧰 **7** MCP tools | 🛰️ **3** live data sources | 🤖 **2** AI clients | ✅ **40** offline tests |
+| 🧰 **7** MCP tools | 🛰️ **3** live data sources | 🤖 **2** AI clients | ✅ **47** offline tests |
 |:---:|:---:|:---:|:---:|
 
 </div>
@@ -293,7 +293,8 @@ flowchart LR
 | `get_forecast` | `city` | Open-Meteo CAMS air quality + weather + trained LSTM | ✅ Live |
 
 > 💡 Every tool returns a clean, structured report: AQI calculated from raw
-> pollutant readings, fire hotspots filtered by distance and confidence, and
+> pollutant readings (only recent ones, each with its measurement time), fire
+> hotspots filtered by distance and confidence, and
 > flood or storm risk from rainfall and wind-gust thresholds. The AI always
 > has real numbers, sources, and timestamps to work with.
 
@@ -765,7 +766,8 @@ ecosentinel/
 │   ├── test_anomaly.py  # Unit tests for the z-score math
 │   ├── test_causal.py   # Causal engine tests on synthetic data
 │   ├── test_forecast.py # LSTM model + forecast tests
-│   └── test_agent.py    # Gemini agent config + MCP tool discovery (offline)
+│   ├── test_agent.py    # Gemini agent config + MCP tool discovery (offline)
+│   └── test_openaq.py   # OpenAQ v3 request params, paging, latest readings (offline)
 ├── docs/
 │   └── images/          # README screenshots
 ├── .env.example         # Template for environment variables
@@ -779,7 +781,7 @@ ecosentinel/
 ## ✅ Running Tests
 
 ```bash
-# Fast offline tests (anomaly math, causal engine, LSTM, Gemini agent): no network needed
+# Fast offline tests (anomaly math, causal engine, LSTM, Gemini agent, OpenAQ calls): no network needed
 python -m pytest tests/ --ignore=tests/test_tools.py -v
 
 # Full suite, including tool tests that call the live APIs
@@ -792,6 +794,7 @@ python -m pytest tests/ -v
 | `test_causal.py` | DAG building, graceful fallback, probability bounds, strong vs weak signals, refutation output (synthetic data) | No |
 | `test_forecast.py` | LSTM shapes, scaling round-trip, risk labels | No |
 | `test_agent.py` | Agent model and retry settings, the causal guardrail, and that ADK finds all 7 MCP tools (no Gemini calls) | No |
+| `test_openaq.py` | OpenAQ calls use valid v3 parameters, page past 1000 rows, report only fresh readings, and hide physically implausible CO values (fake OpenAQ) | No |
 | `test_tools.py` | Air quality, weather risk, and wildfires for real and unknown cities | Yes |
 
 ---

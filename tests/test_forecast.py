@@ -110,7 +110,7 @@ def test_risk_labels(pm25, expected):
 
 @pytest.mark.skipif(
     not MODEL_PATH.exists(),
-    reason="Model not trained yet — run scripts/train_forecast.py first",
+    reason="Model not trained yet: run notebooks/EcoSentinel_Phase6_Training.ipynb first",
 )
 def test_predict_output_shape():
     import asyncio

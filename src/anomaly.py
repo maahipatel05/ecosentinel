@@ -30,6 +30,8 @@ GEOCODE_BASE     = "https://geocoding-api.open-meteo.com/v1"
 MIN_DATA_POINTS  = 10   # minimum readings needed for a valid z-score
 Z_THRESHOLD_WARN = 1.5  # above this: elevated alert
 Z_THRESHOLD_ANOM = 2.0  # above this: confirmed anomaly
+PAGE_LIMIT       = 1000  # rows per OpenAQ /measurements page
+MAX_PAGES        = 10    # safety cap: at most 10,000 rows per history fetch
 
 
 # ── Helper: geocode ────────────────────────────────────────────────────────────
@@ -151,26 +153,39 @@ async def fetch_pm25_history(
     date_to   = datetime.now(timezone.utc)
     date_from = date_to - timedelta(days=days)
 
-    r = await client.get(
-        f"{OPENAQ_BASE}/sensors/{sensor_id}/measurements",
-        params={
-            "date_from":  date_from.strftime("%Y-%m-%dT%H:%M:%SZ"),
-            "date_to":    date_to.strftime("%Y-%m-%dT%H:%M:%SZ"),
-            "limit":      1000,
-            "order_by":   "datetime",
-            "sort_order": "asc",
-        },
-        headers=_auth_headers(),
-    )
+    # OpenAQ v3's /measurements only accepts datetime_from, datetime_to,
+    # limit and page. Unknown names (date_from, order_by, sort_order) are
+    # silently ignored, which used to return the sensor's OLDEST readings.
+    # Results come oldest first, and some sensors report several times an
+    # hour, so page through until a short page instead of stopping at 1000.
+    results = []
+    for page in range(1, MAX_PAGES + 1):
+        r = await client.get(
+            f"{OPENAQ_BASE}/sensors/{sensor_id}/measurements",
+            params={
+                "datetime_from": date_from.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                "datetime_to":   date_to.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                "limit":         PAGE_LIMIT,
+                "page":          page,
+            },
+            headers=_auth_headers(),
+        )
+        if r.status_code != 200:
+            break
+        batch = r.json().get("results", [])
+        results.extend(batch)
+        if len(batch) < PAGE_LIMIT:
+            break
 
-    if r.status_code != 200:
-        return []
-
-    results = r.json().get("results", [])
+    # Defensive: drop anything outside the window we asked for
+    window_start = date_from.strftime("%Y-%m-%dT%H:%M:%SZ")
     values = [
         float(entry["value"])
         for entry in results
-        if entry.get("value") is not None and float(entry["value"]) > 0
+        if entry.get("value") is not None
+        and float(entry["value"]) > 0
+        and (((entry.get("period") or {}).get("datetimeFrom") or {}).get("utc") or "")
+        >= window_start
     ]
     if values:
         _cache.set(key, values, _cache.TTL_HISTORY)
@@ -192,13 +207,10 @@ async def fetch_current_pm25(
     if cached is not None:
         return cached
 
+    # /sensors/{id} includes a "latest" field with the newest reading.
+    # (/measurements has no sort option and returns the OLDEST reading first.)
     r = await client.get(
-        f"{OPENAQ_BASE}/sensors/{sensor_id}/measurements",
-        params={
-            "limit":      1,
-            "order_by":   "datetime",
-            "sort_order": "desc",
-        },
+        f"{OPENAQ_BASE}/sensors/{sensor_id}",
         headers=_auth_headers(),
     )
 
@@ -209,7 +221,7 @@ async def fetch_current_pm25(
     if not results:
         return None
 
-    val = results[0].get("value")
+    val = (results[0].get("latest") or {}).get("value")
     result = float(val) if val is not None else None
     if result is not None:
         _cache.set(key, result, _cache.TTL_CURRENT)

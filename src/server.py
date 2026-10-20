@@ -14,7 +14,7 @@ Tools exposed:
 import os
 import httpx
 import asyncio
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from dotenv import load_dotenv
 from mcp.server.fastmcp import FastMCP
 import cache as _cache
@@ -39,6 +39,41 @@ OPENAQ_BASE = "https://api.openaq.org/v3"
 FIRMS_BASE = "https://firms.modaps.eosdis.nasa.gov/api/area"
 METEO_BASE = "https://api.open-meteo.com/v1"
 GEOCODE_BASE = "https://geocoding-api.open-meteo.com/v1"
+
+# Readings older than this are treated as stale and not reported as "current".
+# Some government stations (e.g. GPCB in Gujarat) publish to OpenAQ with a
+# delay of a day or more, so 24 h would hide real data for many cities.
+MAX_READING_AGE_HOURS = 72
+
+# Physically plausible outdoor CO ranges per unit. Background CO never drops
+# below ~40 ppb anywhere on Earth, and ~50 ppm is far beyond outdoor air.
+# Values outside these ranges almost always mean the source mislabelled the
+# unit (e.g. Indian stations reporting mg/m³ that OpenAQ tags as ppb), so the
+# reading is hidden rather than shown with a wrong unit.
+CO_PLAUSIBLE_RANGES = {
+    "ppb": (10, 50_000),
+    "ppm": (0.01, 50),
+    "µg/m³": (10, 60_000),
+    "mg/m³": (0.01, 60),
+}
+
+
+def is_plausible(pname: str, value: float, unit: str) -> bool:
+    """False if a CO value is impossible for its stated unit; True otherwise."""
+    if pname != "co" or unit not in CO_PLAUSIBLE_RANGES:
+        return True
+    low, high = CO_PLAUSIBLE_RANGES[unit]
+    return low <= value <= high
+
+
+def parse_utc(ts: str | None) -> datetime | None:
+    """Parse an OpenAQ ISO timestamp like '2026-10-18T08:30:00Z'."""
+    if not ts:
+        return None
+    try:
+        return datetime.fromisoformat(ts.replace("Z", "+00:00"))
+    except ValueError:
+        return None
 
 
 # Helpers
@@ -130,13 +165,15 @@ async def get_air_quality(city: str) -> str:
 
     async with httpx.AsyncClient(timeout=20) as client:
 
-        # Step 1: Find nearby stations
+        # Step 1: Find nearby stations. order_by="id" lists the oldest-registered
+        # stations first, and many of those are decommissioned, so ask for 20
+        # and keep only the ones that have reported recently.
         r = await client.get(
             f"{OPENAQ_BASE}/locations",
             params={
                 "coordinates": f"{lat},{lon}",
                 "radius": 25000,
-                "limit": 5,
+                "limit": 20,
                 "order_by": "id",
             },
             headers=headers,
@@ -153,48 +190,89 @@ async def get_air_quality(city: str) -> str:
                 "Try a larger nearby city."
             )
 
-        # Step 2: Collect one sensor ID per pollutant type
-        sensor_ids = {}
-        station_names = []
+        cutoff = datetime.now(timezone.utc) - timedelta(hours=MAX_READING_AGE_HOURS)
+        active = []
+        for loc in locations:
+            last = parse_utc((loc.get("datetimeLast") or {}).get("utc"))
+            if last is not None and last >= cutoff:
+                active.append((last, loc))
+        active.sort(key=lambda pair: pair[0], reverse=True)
+        active_locs = [loc for _, loc in active[:3]]
 
-        for loc in locations[:3]:
-            station_names.append(loc.get("name", "Unknown station"))
-            for sensor in loc.get("sensors", []):
-                param = sensor.get("parameter", {})
-                pname = param.get("name", "").lower()
-                if pname in param_labels and pname not in sensor_ids:
-                    sensor_ids[pname] = (sensor["id"], param.get("units", ""))
+        if not active_locs:
+            return (
+                f"Stations found near **{display_name}** but none has reported in the "
+                f"last {MAX_READING_AGE_HOURS} hours.\n"
+                "This city may have limited real-time coverage on OpenAQ right now."
+            )
 
-        if not sensor_ids:
-            return f"Stations found near **{display_name}** but no compatible sensors detected."
-
-        # Step 3: Fetch latest measurement for each sensor concurrently
-        async def fetch_sensor(pname, sid, unit):
+        # Step 2: Fetch each active station's latest readings (one call per
+        # station). The /measurements endpoint has no sort option and returns
+        # a sensor's OLDEST readings first, so it must not be used for "latest".
+        async def fetch_latest(loc):
             try:
                 resp = await client.get(
-                    f"{OPENAQ_BASE}/sensors/{sid}/measurements",
-                    params={"limit": 1, "order_by": "datetime", "sort_order": "desc"},
+                    f"{OPENAQ_BASE}/locations/{loc['id']}/latest",
                     headers=headers,
                 )
                 if resp.status_code == 200:
-                    results = resp.json().get("results", [])
-                    if results:
-                        val = results[0].get("value")
-                        if val is not None:
-                            return pname, float(val), unit
+                    return loc, resp.json().get("results", [])
             except Exception:
                 pass
-            return pname, None, unit
+            return loc, []
 
-        tasks = [fetch_sensor(p, sid, unit) for p, (sid, unit) in sensor_ids.items()]
-        raw_results = await asyncio.gather(*tasks)
-        pollutants = {p: (v, u) for p, v, u in raw_results if v is not None}
+        latest_results = await asyncio.gather(*(fetch_latest(l) for l in active_locs))
+
+        # Step 3: Keep the freshest recent reading per pollutant. A station can
+        # have two sensors for one pollutant in different units (e.g. CO in
+        # µg/m³ and ppb), so the unit always comes from the sensor that
+        # produced the chosen reading.
+        pollutants = {}  # pname -> (value, unit, measured_at)
+        implausible = {}  # pname -> (value, unit) hidden as physically impossible
+        station_names = []
+
+        for loc, readings in latest_results:
+            sensor_info = {}
+            for sensor in loc.get("sensors", []):
+                param = sensor.get("parameter", {})
+                sensor_info[sensor["id"]] = (
+                    param.get("name", "").lower(),
+                    param.get("units", ""),
+                )
+
+            used_station = False
+            for m in readings:
+                pname, unit = sensor_info.get(m.get("sensorsId"), ("", ""))
+                measured_at = parse_utc((m.get("datetime") or {}).get("utc"))
+                value = m.get("value")
+                if (
+                    pname not in param_labels
+                    or value is None
+                    or measured_at is None
+                    or measured_at < cutoff
+                ):
+                    continue
+                if not is_plausible(pname, float(value), unit):
+                    implausible.setdefault(pname, (float(value), unit))
+                    continue
+                used_station = True
+                if pname not in pollutants or measured_at > pollutants[pname][2]:
+                    pollutants[pname] = (float(value), unit, measured_at)
+
+            if used_station:
+                station_names.append(loc.get("name", "Unknown station"))
+
+        # Only mention a hidden reading if no plausible one replaced it
+        implausible = {p: vu for p, vu in implausible.items() if p not in pollutants}
 
         if not pollutants:
             return (
-                f"Stations found near **{display_name}** but readings are older than 24 hours.\n"
+                f"Stations found near **{display_name}** but none has reported in the "
+                f"last {MAX_READING_AGE_HOURS} hours.\n"
                 "This city may have limited real-time coverage on OpenAQ right now."
             )
+
+        newest = max(t for _, _, t in pollutants.values())
 
         # Step 4: Estimate AQI from PM2.5
         aqi_str = ""
@@ -216,14 +294,24 @@ async def get_air_quality(city: str) -> str:
         # Step 5: Format output
         lines = [
             f"## 🌫️ Air Quality — {display_name}",
-            f"*Data from OpenAQ | {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}*",
+            f"*Data from OpenAQ | Latest sensor reading: {newest.strftime('%Y-%m-%d %H:%M UTC')}*",
             aqi_str,
             "\n**Pollutant Levels:**",
         ]
 
-        for param, (val, unit) in pollutants.items():
+        for param, (val, unit, measured_at) in pollutants.items():
             label = param_labels.get(param, param.upper())
-            lines.append(f"  • {label}: **{val:.1f} {unit}**")
+            lines.append(
+                f"  • {label}: **{val:.1f} {unit}** "
+                f"(measured {measured_at.strftime('%Y-%m-%d %H:%M UTC')})"
+            )
+
+        for param, (val, unit) in implausible.items():
+            label = param_labels.get(param, param.upper())
+            lines.append(
+                f"  • {label}: not shown. The source reported {val:g} {unit}, which "
+                "is physically implausible, so the unit is probably mislabelled."
+            )
 
         lines += [
             f"\n**Stations sampled**: {', '.join(station_names[:3])}",
@@ -663,8 +751,9 @@ async def get_forecast(city: str) -> str:
     across Delhi, Los Angeles, Seoul, and Krakow, then evaluated against
     persistence and rolling-average baselines.
 
-    Requires the model to be trained first:
-        python3 scripts/train_forecast.py
+    Requires the model to be trained first with:
+        notebooks/EcoSentinel_Phase6_Training.ipynb (run in Colab, then put
+        lstm_pm25.pt and scaler.json in data/model/)
 
     Args:
         city: City name, e.g. 'Delhi', 'Seoul', 'London'

@@ -2,15 +2,15 @@
 EcoSentinel Phase 6 — LSTM Forecast Inference
 ==============================================
 Production inference module loaded by the MCP server.
-Training happens separately in scripts/train_forecast.py.
+Training happens separately in notebooks/EcoSentinel_Phase6_Training.ipynb (Colab).
 
 Model: stacked LSTM (64 → 32 hidden units)
 Input: last 30 days of [PM2.5, wind_speed_10m, temperature_2m]
 Output: tomorrow's predicted PM2.5 (µg/m³)
 
-Before calling predict_next_day(), run:
-    python3 scripts/train_forecast.py
-to generate data/model/lstm_pm25.pt and data/model/scaler.json.
+Before calling predict_next_day(), run the training notebook
+    notebooks/EcoSentinel_Phase6_Training.ipynb
+and place data/model/lstm_pm25.pt and data/model/scaler.json locally.
 """
 
 import json
@@ -35,7 +35,7 @@ AIR_QUALITY_URL = "https://air-quality-api.open-meteo.com/v1/air-quality"
 WEATHER_URL     = "https://api.open-meteo.com/v1/forecast"
 GEOCODE_URL     = "https://geocoding-api.open-meteo.com/v1/search"
 
-# ── Architecture constants — must match train_forecast.py exactly ───────────────
+# ── Architecture constants — must match the training notebook exactly ───────────────
 
 N_FEATURES = 3   # [pm25, wind_speed_10m, temperature_2m]
 SEQ_LEN    = 30  # days of history fed as input
@@ -97,12 +97,12 @@ def _load_model() -> tuple[PM25LSTM, dict]:
     if not MODEL_PATH.exists():
         raise FileNotFoundError(
             f"Model not found at {MODEL_PATH}\n"
-            "Run:  python3 scripts/train_forecast.py"
+            "Train it with notebooks/EcoSentinel_Phase6_Training.ipynb (Colab)"
         )
     if not SCALER_PATH.exists():
         raise FileNotFoundError(
             f"Scaler not found at {SCALER_PATH}\n"
-            "Run:  python3 scripts/train_forecast.py"
+            "Train it with notebooks/EcoSentinel_Phase6_Training.ipynb (Colab)"
         )
 
     scaler = json.loads(SCALER_PATH.read_text())

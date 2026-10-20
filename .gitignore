@@ -32,7 +32,7 @@ htmlcov/
 # Documentation and explanations
 understanding/
 
-# Trained model weights (large binary files — regenerate with train_forecast.py)
+# Trained model weights (large binary files — regenerate with notebooks/EcoSentinel_Phase6_Training.ipynb)
 data/model/*.pt
 data/model/*.bin
 data/model/*.pth
