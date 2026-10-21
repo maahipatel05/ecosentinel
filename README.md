@@ -58,22 +58,21 @@ Development Kit (ADK).
 ## 📑 Table of Contents
 
 1. [The Big Idea: Hybrid Intelligence](#-the-big-idea-hybrid-intelligence)
-2. [Project Status](#-project-status)
-3. [Architecture](#-architecture)
-4. [How a Question Gets Answered](#-how-a-question-gets-answered)
-5. [MCP in Plain English](#-mcp-in-plain-english)
-6. [The Tools](#-the-tools)
-7. [Anomaly Detection](#-anomaly-detection)
-8. [Causal Inference](#-causal-inference)
-9. [LSTM Forecasting](#-lstm-forecasting)
-10. [Gemini Agent with Google ADK](#-gemini-agent-with-google-adk)
-11. [BigQuery Warehouse on Google Cloud](#-bigquery-warehouse-on-google-cloud)
-12. [Getting Started](#-getting-started)
-13. [Example Output](#-example-output)
-14. [Data Sources](#-data-sources)
-15. [Project Structure](#-project-structure)
-16. [Running Tests](#-running-tests)
-17. [License and Acknowledgements](#-license-and-acknowledgements)
+2. [Architecture](#-architecture)
+3. [How a Question Gets Answered](#-how-a-question-gets-answered)
+4. [MCP in Plain English](#-mcp-in-plain-english)
+5. [The Tools](#-the-tools)
+6. [Anomaly Detection](#-anomaly-detection)
+7. [Causal Inference](#-causal-inference)
+8. [LSTM Forecasting](#-lstm-forecasting)
+9. [Gemini Agent with Google ADK](#-gemini-agent-with-google-adk)
+10. [BigQuery Warehouse on Google Cloud](#-bigquery-warehouse-on-google-cloud)
+11. [Getting Started](#-getting-started)
+12. [Example Output](#-example-output)
+13. [Data Sources](#-data-sources)
+14. [Project Structure](#-project-structure)
+15. [Running Tests](#-running-tests)
+16. [License and Acknowledgements](#-license-and-acknowledgements)
 
 ---
 
@@ -110,41 +109,6 @@ flowchart LR
 pollution spike near a wildfire, the model doesn't get to guess whether the
 fire is to blame. Python runs real statistics and causal inference and hands
 the model a number it can defend.
-
----
-
-## 🚦 Project Status
-
-```mermaid
-flowchart LR
-    P12["Phases 1 and 2<br/>MCP server +<br/>4 live tools"]:::done --> P3["Phase 3<br/>Claude Desktop"]:::done
-    P3 --> P4["Phase 4<br/>Anomaly<br/>detection"]:::done
-    P4 --> P5["Phase 5<br/>Causal<br/>inference"]:::done
-    P5 --> P6A["Phase 6A<br/>LSTM<br/>forecast"]:::done
-    P6A --> ADK["Gemini agent<br/>Google ADK"]:::done
-    ADK --> BQ["BigQuery<br/>warehouse"]:::done
-    BQ --> P6B["Phase 6B<br/>TimesFM +<br/>LoRA"]:::planned
-    P6B --> P7["Phase 7<br/>Streamlit<br/>dashboard"]:::planned
-    P7 --> P8["Phase 8<br/>MLOps<br/>pipeline"]:::planned
-    P8 --> P9["Phase 9<br/>Polish"]:::planned
-
-    classDef done fill:#2e7d32,stroke:#1b5e20,color:#ffffff
-    classDef planned fill:#eceff1,stroke:#90a4ae,color:#37474f,stroke-dasharray: 5 5
-```
-
-| Phase | What | Status |
-|---|---|---|
-| 1 and 2 | MCP server and 4 core live-data tools | ✅ Complete |
-| 3 | Claude Desktop connection, tested on real cities | ✅ Complete |
-| 4 | Z-score anomaly detection (`src/anomaly.py`) | ✅ Complete |
-| 5 | DoWhy causal attribution (`src/causal.py`) | ✅ Complete |
-| 6A | LSTM next-day PM2.5 forecast (`src/forecast.py`) | ✅ Complete |
-| ➕ | Gemini agent via Google ADK (`agents/ecosentinel_agent/`) | ✅ Complete |
-| ➕ | BigQuery warehouse for sensor history + `get_pm25_trends` tool (`src/warehouse.py`) | ✅ Complete |
-| 6B | TimesFM zero-shot and LoRA fine-tune, compared against the LSTM | 🧭 Planned |
-| 7 | Streamlit dashboard with maps, charts, and risk cards | 🧭 Planned |
-| 8 | MLOps pipeline: scheduled loading, retraining, drift detection (storage now lives in BigQuery) | 🧭 Planned |
-| 9 | Polish: results write-up, demo video, architecture diagram | 🧭 Planned |
 
 ---
 
@@ -208,7 +172,6 @@ The system is built in layers:
 | 5 | **Warehouse** | Store sensor history and answer trend questions with SQL | Google BigQuery, `google-cloud-bigquery`, gcloud CLI |
 | 6 | **MCP Interface** | Expose every tool to any MCP-compatible client | `FastMCP`, `mcp` |
 | 7 | **AI Clients** | Pick tools and turn results into answers | Claude Desktop, Gemini via Google ADK |
-| 8 | **Visual Dashboard** | Maps, wind vectors, time-series charts | `Streamlit`, `plotly`, `folium` (🧭 planned) |
 
 ---
 

@@ -793,7 +793,6 @@ async def get_forecast(city: str) -> str:
         f"**Risk level**: {icon} {risk}",
         "",
         "*Source: LSTM model trained on Open-Meteo CAMS historical data.*",
-        "*For fine-tuned TimesFM forecasting, see Phase 6B (LoRA fine-tuning).*",
     ]
     return "\n".join(lines)
 
