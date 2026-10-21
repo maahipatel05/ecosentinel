@@ -17,7 +17,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 import cache
 import server
-from anomaly import fetch_pm25_history, fetch_current_pm25
+from anomaly import fetch_pm25_history, fetch_current_pm25, find_pm25_sensor
 from causal import fetch_pm25_daily
 
 MEASUREMENT_PARAMS = {"datetime_from", "datetime_to", "limit", "page"}
@@ -87,6 +87,35 @@ async def test_history_pages_past_the_1000_row_limit():
 
     assert pages == [1, 2]
     assert len(values) == 1005
+
+
+@pytest.mark.asyncio
+async def test_find_sensor_skips_dead_sensor_at_active_station():
+    # Real Ahmedabad case: an active station lists a sensor that went silent
+    # in 2022 BEFORE its live PM2.5 sensor
+    now = datetime.now(timezone.utc)
+    dead_since = datetime(2022, 10, 31, 1, 45, tzinfo=timezone.utc)
+    location = {
+        "id": 5631,
+        "name": "Maninagar",
+        "datetimeLast": {"utc": iso(now - timedelta(hours=3))},
+        "sensors": [
+            {"id": 14964, "parameter": {"name": "pm25"}},
+            {"id": 12235671, "parameter": {"name": "pm25"}},
+        ],
+    }
+    last_seen = {14964: dead_since, 12235671: now - timedelta(hours=3)}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/v3/locations":
+            return httpx.Response(200, json={"results": [location]})
+        sid = int(request.url.path.rsplit("/", 1)[1])
+        return httpx.Response(
+            200, json={"results": [{"datetimeLast": {"utc": iso(last_seen[sid])}}]}
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        assert await find_pm25_sensor(client, 23.0, 72.6) == 12235671
 
 
 @pytest.mark.asyncio

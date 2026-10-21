@@ -9,6 +9,7 @@ Run from the project root:
     adk web agents
 """
 
+import os
 import sys
 from pathlib import Path
 
@@ -25,7 +26,9 @@ SERVER_PATH = PROJECT_ROOT / "src" / "server.py"
 
 root_agent = LlmAgent(
     model=Gemini(
-        model="gemini-flash-latest",
+        # Overridable in .env, e.g. GEMINI_MODEL=gemini-flash-lite-latest when
+        # the default model returns 503 "experiencing high demand"
+        model=os.getenv("GEMINI_MODEL", "gemini-flash-latest"),
         # Retry transient Gemini errors (503 overloaded, 429 rate limit, ...)
         # with exponential backoff (~1s, 2s, 4s), like causal.py's FIRMS calls.
         retry_options=types.HttpRetryOptions(initial_delay=1, attempts=4),
@@ -44,7 +47,8 @@ root_agent = LlmAgent(
         "Only say wildfires are causing or contributing to pollution if "
         "get_causal_attribution returns a causal probability supporting it. "
         "If it reports insufficient data, say fire influence is unverified. "
-        "Use get_forecast for questions about the coming days. "
+        "Use get_forecast for questions about the coming days, and "
+        "get_pm25_trends for history and whether air is getting better or worse. "
         "Cite the data source and timestamp, and give actionable safety advice "
         "when risk is high."
     ),

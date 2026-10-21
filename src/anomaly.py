@@ -74,6 +74,11 @@ async def find_pm25_sensor(client: httpx.AsyncClient, lat: float, lon: float) ->
     decommissioned (some haven't reported since 2016-2017) but still show
     up in results. We use each location's own datetimeLast field to skip
     stale ones, so we don't hand back a sensor ID with no recent data.
+
+    An active station can still hold a dead PM2.5 sensor next to a live
+    one (Ahmedabad's Maninagar station lists sensor 14964, silent since
+    2022, before the live 12235671), so each candidate sensor's own
+    datetimeLast is checked too, and the freshest one wins.
     Returns the sensor ID, or None if no active PM2.5 sensor is found.
     """
     key = f"sensor:{lat:.4f},{lon:.4f}"
@@ -109,13 +114,27 @@ async def find_pm25_sensor(client: httpx.AsyncClient, lat: float, lon: float) ->
             except ValueError:
                 is_active = False
 
-        for sensor in loc.get("sensors") or []:
-            if (sensor.get("parameter") or {}).get("name", "").lower() == "pm25":
-                if is_active:
-                    _cache.set(key, sensor["id"], _cache.TTL_SENSOR_ID)
-                    return sensor["id"]
-                if fallback_sensor_id is None:
-                    fallback_sensor_id = sensor["id"]
+        pm25_ids = [
+            sensor["id"]
+            for sensor in loc.get("sensors") or []
+            if (sensor.get("parameter") or {}).get("name", "").lower() == "pm25"
+        ]
+        if not pm25_ids:
+            continue
+        if fallback_sensor_id is None:
+            fallback_sensor_id = pm25_ids[0]
+        if not is_active:
+            continue
+
+        best_id, best_dt = None, None
+        for sid in pm25_ids:
+            sensor_last = await _sensor_last_reading(client, sid)
+            if sensor_last is not None and sensor_last >= cutoff:
+                if best_dt is None or sensor_last > best_dt:
+                    best_id, best_dt = sid, sensor_last
+        if best_id is not None:
+            _cache.set(key, best_id, _cache.TTL_SENSOR_ID)
+            return best_id
 
     # No active sensor found nearby — return the first stale one we saw so
     # callers still get *something* (and their own data-sufficiency checks
@@ -124,6 +143,21 @@ async def find_pm25_sensor(client: httpx.AsyncClient, lat: float, lon: float) ->
     if fallback_sensor_id is not None:
         _cache.set(key, fallback_sensor_id, _cache.TTL_SENSOR_ID)
     return fallback_sensor_id
+
+
+async def _sensor_last_reading(client: httpx.AsyncClient, sensor_id: int) -> datetime | None:
+    """When this specific sensor last reported, from /sensors/{id}."""
+    r = await client.get(f"{OPENAQ_BASE}/sensors/{sensor_id}", headers=_auth_headers())
+    if r.status_code != 200:
+        return None
+    results = r.json().get("results", [])
+    last_str = ((results[0].get("datetimeLast") or {}).get("utc")) if results else None
+    if not last_str:
+        return None
+    try:
+        return datetime.fromisoformat(last_str.replace("Z", "+00:00"))
+    except ValueError:
+        return None
 
 
 # ── Helper: auth headers ───────────────────────────────────────────────────────
@@ -145,7 +179,21 @@ async def fetch_pm25_history(
     Fetch the last N days of PM2.5 readings for a specific sensor.
     Returns a list of float values. Empty list if unavailable.
     """
-    key = f"pm25_history:{sensor_id}:{days}"
+    measurements = await fetch_pm25_measurements(client, sensor_id, days)
+    return [value for _, value in measurements]
+
+
+async def fetch_pm25_measurements(
+    client: httpx.AsyncClient,
+    sensor_id: int,
+    days: int = 30,
+) -> list[tuple[str, float]]:
+    """
+    Fetch the last N days of PM2.5 readings for a specific sensor, with
+    their timestamps. Returns (utc_timestamp, value) pairs, oldest first,
+    e.g. ("2026-10-17T18:30:00Z", 51.8). Empty list if unavailable.
+    """
+    key = f"pm25_measurements:{sensor_id}:{days}"
     cached = _cache.get(key)
     if cached is not None:
         return cached
@@ -179,17 +227,15 @@ async def fetch_pm25_history(
 
     # Defensive: drop anything outside the window we asked for
     window_start = date_from.strftime("%Y-%m-%dT%H:%M:%SZ")
-    values = [
-        float(entry["value"])
-        for entry in results
-        if entry.get("value") is not None
-        and float(entry["value"]) > 0
-        and (((entry.get("period") or {}).get("datetimeFrom") or {}).get("utc") or "")
-        >= window_start
-    ]
-    if values:
-        _cache.set(key, values, _cache.TTL_HISTORY)
-    return values
+    measurements = []
+    for entry in results:
+        value = entry.get("value")
+        ts = ((entry.get("period") or {}).get("datetimeFrom") or {}).get("utc") or ""
+        if value is not None and float(value) > 0 and ts >= window_start:
+            measurements.append((ts, float(value)))
+    if measurements:
+        _cache.set(key, measurements, _cache.TTL_HISTORY)
+    return measurements
 
 
 # ── Helper: fetch current PM2.5 reading ───────────────────────────────────────

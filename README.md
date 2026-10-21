@@ -12,10 +12,11 @@
 [![Google ADK](https://img.shields.io/badge/Client-Gemini%20via%20Google%20ADK-4285F4?logo=google)](https://adk.dev)
 [![DoWhy](https://img.shields.io/badge/Causal-DoWhy-purple)](https://www.pywhy.org/dowhy)
 [![PyTorch](https://img.shields.io/badge/Forecast-PyTorch%20LSTM-EE4C2C?logo=pytorch)](https://pytorch.org)
+[![BigQuery](https://img.shields.io/badge/Warehouse-Google%20BigQuery-669DF6?logo=googlecloud)](https://cloud.google.com/bigquery)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow)](LICENSE)
 
-| 🧰 **7** MCP tools | 🛰️ **3** live data sources | 🤖 **2** AI clients | ✅ **47** offline tests |
-|:---:|:---:|:---:|:---:|
+| 🧰 **8** MCP tools | 🛰️ **3** live data sources | 🤖 **2** AI clients | ☁️ **BigQuery** warehouse | ✅ **58** offline tests |
+|:---:|:---:|:---:|:---:|:---:|
 
 </div>
 
@@ -29,13 +30,14 @@
 
 EcoSentinel is an MCP server that gives AI assistants access to live
 environmental data: air quality sensors, satellite wildfire detection, and
-weather. On top of that data it does three things a chatbot can't do on its own:
+weather. On top of that data it does four things a chatbot can't do on its own:
 
 | | Capability | The question it answers | How |
 |:---:|---|---|---|
 | 📊 | **Detect** | *Is today's pollution unusual for this city?* | Z-score against the city's own 30-day history |
 | 🧭 | **Explain** | *Is the wildfire actually causing it, or is it just nearby?* | Causal inference with DoWhy |
 | 🔮 | **Predict** | *What will PM2.5 be tomorrow?* | A stacked LSTM trained in PyTorch |
+| 📈 | **Track** | *Is the air getting better or worse?* | SQL over sensor history stored in Google BigQuery |
 
 The same server plugs into **two different AI clients without changing a line
 of server code**: Claude Desktop, and a Gemini agent built with Google's Agent
@@ -48,6 +50,7 @@ Development Kit (ADK).
 > 💬 "Is Jakarta's air quality unusual for this time of year, or just normal smog?"
 > 💬 "Is the wildfire actually causing Sydney's pollution, or is it a coincidence?"
 > 💬 "What will PM2.5 be in Seoul tomorrow?"
+> 💬 "Is Ahmedabad's air getting better or worse this month?"
 > 💬 "Give me a full environmental crisis briefing for Mumbai."
 
 ---
@@ -64,12 +67,13 @@ Development Kit (ADK).
 8. [Causal Inference](#-causal-inference)
 9. [LSTM Forecasting](#-lstm-forecasting)
 10. [Gemini Agent with Google ADK](#-gemini-agent-with-google-adk)
-11. [Getting Started](#-getting-started)
-12. [Example Output](#-example-output)
-13. [Data Sources](#-data-sources)
-14. [Project Structure](#-project-structure)
-15. [Running Tests](#-running-tests)
-16. [License and Acknowledgements](#-license-and-acknowledgements)
+11. [BigQuery Warehouse on Google Cloud](#-bigquery-warehouse-on-google-cloud)
+12. [Getting Started](#-getting-started)
+13. [Example Output](#-example-output)
+14. [Data Sources](#-data-sources)
+15. [Project Structure](#-project-structure)
+16. [Running Tests](#-running-tests)
+17. [License and Acknowledgements](#-license-and-acknowledgements)
 
 ---
 
@@ -89,12 +93,13 @@ flowchart LR
         L3["Writes the final answer"]
     end
 
-    subgraph PY["🐍 Python: scipy, numpy, DoWhy, PyTorch"]
+    subgraph PY["🐍 Python + SQL: scipy, numpy, DoWhy, PyTorch, BigQuery"]
         direction TB
         P1["Fetches live data"]
         P2["Computes z-scores"]
         P3["Estimates causal effects"]
         P4["Runs the forecast model"]
+        P5["Queries stored history"]
     end
 
     LLM -- "what to analyze" --> PY
@@ -117,7 +122,8 @@ flowchart LR
     P4 --> P5["Phase 5<br/>Causal<br/>inference"]:::done
     P5 --> P6A["Phase 6A<br/>LSTM<br/>forecast"]:::done
     P6A --> ADK["Gemini agent<br/>Google ADK"]:::done
-    ADK --> P6B["Phase 6B<br/>TimesFM +<br/>LoRA"]:::planned
+    ADK --> BQ["BigQuery<br/>warehouse"]:::done
+    BQ --> P6B["Phase 6B<br/>TimesFM +<br/>LoRA"]:::planned
     P6B --> P7["Phase 7<br/>Streamlit<br/>dashboard"]:::planned
     P7 --> P8["Phase 8<br/>MLOps<br/>pipeline"]:::planned
     P8 --> P9["Phase 9<br/>Polish"]:::planned
@@ -134,9 +140,10 @@ flowchart LR
 | 5 | DoWhy causal attribution (`src/causal.py`) | ✅ Complete |
 | 6A | LSTM next-day PM2.5 forecast (`src/forecast.py`) | ✅ Complete |
 | ➕ | Gemini agent via Google ADK (`agents/ecosentinel_agent/`) | ✅ Complete |
+| ➕ | BigQuery warehouse for sensor history + `get_pm25_trends` tool (`src/warehouse.py`) | ✅ Complete |
 | 6B | TimesFM zero-shot and LoRA fine-tune, compared against the LSTM | 🧭 Planned |
 | 7 | Streamlit dashboard with maps, charts, and risk cards | 🧭 Planned |
-| 8 | MLOps pipeline: storage, retraining, drift detection | 🧭 Planned |
+| 8 | MLOps pipeline: scheduled loading, retraining, drift detection (storage now lives in BigQuery) | 🧭 Planned |
 | 9 | Polish: results write-up, demo video, architecture diagram | 🧭 Planned |
 
 ---
@@ -153,12 +160,17 @@ flowchart TB
     C <-- "MCP over stdio" --> S
     G <-- "MCP over stdio" --> S
 
-    S["🖥️ EcoSentinel MCP Server<br/>src/server.py · 7 tools"]
+    S["🖥️ EcoSentinel MCP Server<br/>src/server.py · 8 tools"]
 
     subgraph Engines["🧮 Analysis engines"]
         AN["📊 Z-score anomaly engine<br/>src/anomaly.py"]
         CA["🧭 DoWhy causal engine<br/>src/causal.py"]
         FC["🔮 LSTM forecaster<br/>src/forecast.py"]
+        WH["📈 Warehouse loader + SQL<br/>src/warehouse.py"]
+    end
+
+    subgraph GCP["☁️ Google Cloud"]
+        BQ[("BigQuery<br/>ecosentinel.pm25_readings")]
     end
 
     subgraph Data["🛰️ Live data sources"]
@@ -170,7 +182,10 @@ flowchart TB
     S --> AN
     S --> CA
     S --> FC
+    S --> WH
     S --> Data
+    WH --> AQ
+    WH <--> BQ
     AN --> AQ
     CA --> AQ
     CA --> FI
@@ -190,9 +205,10 @@ The system is built in layers:
 | 2 | **Statistical Engine** | Z-score anomaly detection against a 30-day baseline | `scipy`, `numpy` |
 | 3 | **Causal Inference** | Estimate `P(Y \| do(X))` to attribute pollution to its cause | `DoWhy`, `pandas` |
 | 4 | **Forecasting** | Predict tomorrow's PM2.5 from the last 30 days | `PyTorch` stacked LSTM |
-| 5 | **MCP Interface** | Expose every tool to any MCP-compatible client | `FastMCP`, `mcp` |
-| 6 | **AI Clients** | Pick tools and turn results into answers | Claude Desktop, Gemini via Google ADK |
-| 7 | **Visual Dashboard** | Maps, wind vectors, time-series charts | `Streamlit`, `plotly`, `folium` (🧭 planned) |
+| 5 | **Warehouse** | Store sensor history and answer trend questions with SQL | Google BigQuery, `google-cloud-bigquery`, gcloud CLI |
+| 6 | **MCP Interface** | Expose every tool to any MCP-compatible client | `FastMCP`, `mcp` |
+| 7 | **AI Clients** | Pick tools and turn results into answers | Claude Desktop, Gemini via Google ADK |
+| 8 | **Visual Dashboard** | Maps, wind vectors, time-series charts | `Streamlit`, `plotly`, `folium` (🧭 planned) |
 
 ---
 
@@ -205,6 +221,8 @@ flowchart TD
     D -->|"is it unusual?"| AN["detect_anomaly_tool<br/>z-score vs 30-day baseline"]
     D -->|"what's causing it?"| CA["get_causal_attribution<br/>DoWhy on ~20 days of real data"]
     D -->|"what's next?"| FC["get_forecast<br/>LSTM on the last 30 days"]
+    D -->|"better or worse?"| TR["get_pm25_trends<br/>SQL over BigQuery history"]
+    TR --> OUT
     CA --> E{"At least 15<br/>complete days?"}
     E -->|"yes"| R1["Causal probability<br/>+ robustness checks"]
     E -->|"no"| R2["Falls back to the<br/>z-score result"]
@@ -225,8 +243,9 @@ Step by step:
 5. 🧭 `get_causal_attribution` builds about 20 days of real paired observations (fire intensity, wind, PM2.5) and uses **DoWhy** to estimate how much of today's PM2.5 the fires actually caused, after accounting for wind.
 6. 🛟 If there aren't at least 15 complete days of data, the causal engine **doesn't guess**. It returns the z-score result instead.
 7. 🔮 `get_forecast` runs the trained LSTM on the last 30 days to predict tomorrow's PM2.5.
-8. 📋 Every tool returns a structured report.
-9. ✅ The model writes an answer built entirely on those numbers.
+8. 📈 `get_pm25_trends` adds the city's newest readings to BigQuery, then runs SQL for daily averages, the worst and cleanest days, and week-over-week change.
+9. 📋 Every tool returns a structured report.
+10. ✅ The model writes an answer built entirely on those numbers.
 
 ---
 
@@ -278,8 +297,13 @@ flowchart LR
         T7["get_forecast"]
     end
 
+    subgraph History["☁️ History (BigQuery)"]
+        T8["get_pm25_trends"]
+    end
+
     S --> Live
     S --> Analysis
+    S --> History
 ```
 
 | Tool | Parameters | Source | Status |
@@ -291,6 +315,7 @@ flowchart LR
 | `detect_anomaly_tool` | `city` | OpenAQ history + `scipy` z-score | ✅ Live |
 | `get_causal_attribution` | `city` | OpenAQ + NASA FIRMS + Open-Meteo archive + `DoWhy` | ✅ Live |
 | `get_forecast` | `city` | Open-Meteo CAMS air quality + weather + trained LSTM | ✅ Live |
+| `get_pm25_trends` | `city`, `days` | OpenAQ history stored in Google BigQuery, queried with SQL | ✅ Live |
 
 > 💡 Every tool returns a clean, structured report: AQI calculated from raw
 > pollutant readings (only recent ones, each with its measurement time), fire
@@ -483,7 +508,7 @@ flowchart LR
 EcoSentinel's MCP tools also plug straight into a **Gemini agent** built with
 Google's [Agent Development Kit (ADK)](https://adk.dev). It took **no changes to
 `server.py`**. ADK starts the existing MCP server in the background, asks which
-tools it has, and hands all 7 to Gemini.
+tools it has, and hands all 8 to Gemini.
 
 ### What happens when you ask a question
 
@@ -494,7 +519,7 @@ sequenceDiagram
     participant S as 🖥️ EcoSentinel MCP server
     participant API as 🛰️ OpenAQ / FIRMS / Open-Meteo
 
-    Note over G,S: On startup, ADK launches src/server.py over stdio<br/>and discovers all 7 tools
+    Note over G,S: On startup, ADK launches src/server.py over stdio<br/>and discovers all 8 tools
     U->>G: "Is the air in Ahmedabad dangerous right now?"
     G->>S: get_crisis_summary("Ahmedabad")
     S->>API: air quality + wildfires + weather, all at once
@@ -520,8 +545,8 @@ defines a `root_agent` with three parts:
 
 | Part | Value | Why |
 |---|---|---|
-| 🧠 Model | `gemini-flash-latest`, with automatic retries | Fast, cheap Gemini model that's good at tool calling |
-| 📝 Instruction | EcoSentinel's workflow plus a causal guardrail | Always use tools for current data, check anomaly and causal attribution when PM2.5 is high, and never claim fires cause pollution unless `get_causal_attribution` backs it up |
+| 🧠 Model | `gemini-flash-latest` by default, with automatic retries. Set `GEMINI_MODEL` in `.env` to switch (for example to `gemini-flash-lite-latest` when the default is overloaded) | Fast, cheap Gemini models that are good at tool calling |
+| 📝 Instruction | EcoSentinel's workflow plus a causal guardrail | Always use tools for current data, check anomaly and causal attribution when PM2.5 is high, use `get_pm25_trends` for history, and never claim fires cause pollution unless `get_causal_attribution` backs it up |
 | 🧰 Tools | `McpToolset` → `python src/server.py` over stdio | The exact same MCP server Claude Desktop uses |
 
 ### Three design details
@@ -605,6 +630,107 @@ from the causal engine, Gemini now reports it honestly:
 
 ---
 
+## 💾 BigQuery Warehouse on Google Cloud
+
+Live APIs answer *"what's the air like now?"* Questions like *"is it getting
+better or worse?"* need history. EcoSentinel stores PM2.5 sensor history in
+**Google BigQuery**, Google Cloud's data warehouse, and answers trend questions
+with SQL through an 8th MCP tool, `get_pm25_trends`. The Gemini agent picked it
+up automatically, like every other tool.
+
+### How data flows
+
+```mermaid
+flowchart LR
+    Q["💬 'Is Ahmedabad's air<br/>getting better or worse?'"] --> T["get_pm25_trends"]
+    T --> L["1️⃣ Fetch last 30 days<br/>from OpenAQ"]
+    L --> M{"2️⃣ Newest reading<br/>already in BigQuery?"}
+    M --> N["3️⃣ Keep only<br/>newer readings"]
+    N --> J["4️⃣ Batch load job<br/>WRITE_APPEND"]
+    J --> BQ[("☁️ BigQuery<br/>pm25_readings")]
+    BQ --> S["5️⃣ SQL: daily average,<br/>peak, reading count"]
+    S --> R["📋 Trend report<br/>back to the LLM"]
+```
+
+### The table: `ecosentinel.pm25_readings`
+
+One row is one PM2.5 measurement from one sensor at one moment. **Partitioned by
+day** on `measured_at`, so a query for the last 30 days only reads those 30
+daily chunks, and **clustered by city**, so one city's rows are stored together.
+
+| Column | Type | Meaning |
+|---|---|---|
+| `city` | STRING | City name, e.g. `Ahmedabad, India` |
+| `sensor_id` | INT64 | OpenAQ sensor, so every row traces back to its source |
+| `measured_at` | TIMESTAMP | When the sensor took the reading (partition column) |
+| `pm25` | FLOAT64 | The reading in µg/m³ |
+| `loaded_at` | TIMESTAMP | When EcoSentinel stored it |
+
+### Design decisions
+
+| | Decision | Why |
+|:---:|---|---|
+| 📅 | **Partitioned by day, clustered by city** | Measured with BigQuery dry runs on the 14-city table: a 7-day trend query scans **76% fewer bytes** than a full-table scan (94,853 vs 390,090 bytes), and a 14-day query 49% fewer. The saving grows as history accumulates |
+| 🆓 | Runs in the free **BigQuery sandbox** (no billing account) | The sandbox has no streaming inserts and no DML (`INSERT`, `DELETE`), so rows go in with **batch load jobs** |
+| ➕ | **Only new rows are ever loaded** | The sandbox's 10 GiB storage limit is lifetime and *not refunded when data is deleted*, so wiping and reloading would waste it. Running the load twice in a row adds 0 rows |
+| 🔐 | **No keys in code** | Authentication uses Application Default Credentials from the `gcloud` CLI (`gcloud auth application-default login`) |
+| 🛡️ | **Query parameters** (`@city`, `@days`) | Values are passed separately from the SQL text, never pasted into it, which prevents SQL injection |
+| 📏 | **Partial days can't be the "worst day"** | A window edge or sensor outage can leave a day with a few readings. Only days with at least half the median reading count can be named worst or cleanest; partial days still count toward averages, weighted by reading count |
+| 🧵 | BigQuery calls run in a **worker thread** | The BigQuery client is synchronous; `asyncio.to_thread` keeps it from freezing the MCP server |
+
+### 📊 What's in the warehouse (2026-10-21)
+
+`scripts/load_cities.py` loaded 30 days of history for 15 cities worldwide.
+14 had an active sensor on OpenAQ (Mexico City's nearest sensor had no recent
+data):
+
+| | |
+|---|---|
+| Readings stored | **11,387** |
+| Cities | **14** across Asia, Europe, North America, and Australia |
+| Duplicate rows | **0**, verified across every sensor and timestamp |
+| 7-day query scan savings from partitioning | **76%** |
+
+```mermaid
+xychart-beta
+    title "Readings stored per city (30 days)"
+    x-axis ["Delhi", "Ahmedabad", "Mumbai", "Beijing", "Chicago", "Los Angeles", "Seoul", "Bangkok", "London", "Sydney", "Krakow", "Lahore", "Paris", "Jakarta"]
+    y-axis "Readings" 0 --> 2400
+    bar [2230, 1965, 1102, 719, 716, 713, 708, 704, 672, 613, 567, 296, 245, 137]
+```
+
+<p align="center"><i>Indian sensors report every 15 minutes (about 96 readings a day); most others report hourly (about 24 a day).</i></p>
+
+### 📍 Example: Ahmedabad, live run on 2026-10-21
+
+The first load stored **1,965 readings** (27 days, one every 15 minutes) for
+Ahmedabad's sensor; a second load right after added **0**, and so did the
+15-city load later. Asked *"Is
+Ahmedabad's air getting better or worse this month?"*, Gemini called only
+`get_pm25_trends` and answered from the BigQuery results (shortened):
+
+> Air quality has shown a slight improvement overall. Comparing the latest 7
+> days to the previous 7, average PM2.5 decreased from **60.7 to 58.5 µg/m³**
+> (about 3.5% better). The 30-day average was 58.9 µg/m³ across 1,965 readings.
+> The cleanest day was October 4 (33.9 µg/m³ average); the worst was October 9
+> (87.7 µg/m³), with a single peak reading of 357.7 µg/m³ on October 14.
+
+```mermaid
+xychart-beta
+    title "Ahmedabad daily average PM2.5, latest 14 days with data (µg/m³)"
+    x-axis ["10-05", "10-06", "10-07", "10-08", "10-09", "10-10", "10-11", "10-12", "10-13", "10-14", "10-15", "10-16", "10-17", "10-18"]
+    y-axis "PM2.5 (µg/m³)" 0 --> 100
+    bar [55.1, 61.3, 64.7, 59.2, 87.7, 45.0, 44.8, 53.0, 45.7, 69.2, 61.9, 64.6, 61.9, 45.7]
+```
+
+<p align="center"><i>Daily averages straight from the BigQuery query. Oct 18 is a partial day (34 readings) because the station publishes with a delay.</i></p>
+
+![ADK web UI: Gemini calls get_pm25_trends and answers from BigQuery data](docs/images/adk-bigquery-trends.png)
+
+<p align="center"><i>Gemini picks <code>get_pm25_trends</code> on its own and answers entirely from the BigQuery results: week-over-week change, 30-day average, and the cleanest and worst days.</i></p>
+
+---
+
 ## 🚀 Getting Started
 
 ```mermaid
@@ -615,6 +741,7 @@ flowchart LR
     D --> E{"5️⃣ Pick a client"}
     E --> F["🟠 Claude Desktop"]
     E --> G["🔵 Gemini via ADK"]
+    D -.-> H["☁️ Optional: BigQuery<br/>for get_pm25_trends"]
 ```
 
 ### 1️⃣ Clone the repository
@@ -656,6 +783,8 @@ Then edit `.env`:
 | `OPENAQ_API_KEY` | Optional, raises rate limits | OpenAQ and Open-Meteo work without a key |
 | `GOOGLE_API_KEY` | The Gemini agent only | Free at https://aistudio.google.com/apikey |
 | `GOOGLE_GENAI_USE_VERTEXAI` | The Gemini agent only | Leave as `FALSE`. It tells ADK to use the AI Studio key, not Google Cloud Vertex AI |
+| `GEMINI_MODEL` | Optional, the Gemini agent | Defaults to `gemini-flash-latest`. Use `gemini-flash-lite-latest` if the default returns `503` high demand |
+| `GCP_PROJECT_ID` | The BigQuery trends tool only | Your Google Cloud project ID (see step 6) |
 
 ### 5️⃣ Option A: Connect to Claude Desktop
 
@@ -691,6 +820,35 @@ Open the address it prints (for example `http://127.0.0.1:8000`), pick
 **ecosentinel_agent**, and ask a question. Click any tool-call box in the chat
 to see exactly what Gemini sent and what EcoSentinel sent back. Press
 `Ctrl + C` to stop.
+
+### 6️⃣ Optional: Set up BigQuery for `get_pm25_trends`
+
+Free, with no credit card, using the BigQuery sandbox:
+
+1. Open https://console.cloud.google.com/bigquery, create a project, and copy its
+   **Project ID** into `.env` as `GCP_PROJECT_ID`.
+2. Install the [gcloud CLI](https://cloud.google.com/sdk/docs/install), then log
+   in and point it at your project:
+   ```bash
+   gcloud auth login
+   gcloud config set project YOUR_PROJECT_ID
+   gcloud auth application-default login
+   gcloud auth application-default set-quota-project YOUR_PROJECT_ID
+   ```
+3. Check it works:
+   ```bash
+   bq ls
+   ```
+   Empty output with no error means you're connected.
+
+The dataset and table are created automatically the first time
+`get_pm25_trends` runs. To preload history for 15 cities at once (safe to
+re-run, it only adds new readings):
+
+```bash
+python scripts/load_cities.py
+``` Sandbox tables expire after 60 days, so the tool caps
+`days` at 60.
 
 ---
 
@@ -737,6 +895,8 @@ about as long as one call, roughly 3 seconds instead of 9.
 | 🔥 **[NASA FIRMS](https://firms.modaps.eosdis.nasa.gov)** | Near real-time satellite wildfire detection from the VIIRS SNPP sensor | Wildfires, causal engine |
 | 🌦️ **[Open-Meteo](https://open-meteo.com)** | Free weather forecasts, rain, and wind with no API key. Also historical wind (archive API) and CAMS PM2.5 (air quality API) | Weather risk, causal engine, LSTM training and forecasting |
 
+OpenAQ PM2.5 history is also **stored** in Google BigQuery (`ecosentinel.pm25_readings`) for trend queries.
+
 ---
 
 ## 📁 Project Structure
@@ -744,10 +904,11 @@ about as long as one call, roughly 3 seconds instead of 9.
 ```
 ecosentinel/
 ├── src/
-│   ├── server.py        # MCP server: all 7 tool definitions
+│   ├── server.py        # MCP server: all 8 tool definitions
 │   ├── anomaly.py       # Z-score anomaly detection engine (scipy/numpy)
 │   ├── causal.py        # DoWhy causal inference engine: DAG + P(Y|do(X))
 │   ├── forecast.py      # LSTM model definition + next-day PM2.5 inference
+│   ├── warehouse.py     # BigQuery warehouse: table setup, incremental loads, trend SQL
 │   └── cache.py         # In-memory TTL cache for API responses
 ├── agents/
 │   └── ecosentinel_agent/
@@ -759,6 +920,7 @@ ecosentinel/
 │   ├── model/           # scaler.json (+ lstm_pm25.pt, git-ignored)
 │   └── eval_results/    # Anomaly-detector evaluation runs (JSON)
 ├── scripts/
+│   ├── load_cities.py   # Loads 30 days of PM2.5 history for 15 cities into BigQuery
 │   ├── eval_anomaly.py  # Evaluates the z-score detector against EPA thresholds
 │   └── debug_openaq.py  # OpenAQ debugging helper
 ├── tests/
@@ -767,7 +929,8 @@ ecosentinel/
 │   ├── test_causal.py   # Causal engine tests on synthetic data
 │   ├── test_forecast.py # LSTM model + forecast tests
 │   ├── test_agent.py    # Gemini agent config + MCP tool discovery (offline)
-│   └── test_openaq.py   # OpenAQ v3 request params, paging, latest readings (offline)
+│   ├── test_openaq.py   # OpenAQ v3 request params, paging, latest readings (offline)
+│   └── test_warehouse.py # BigQuery incremental-load and trend-summary logic (offline)
 ├── docs/
 │   └── images/          # README screenshots
 ├── .env.example         # Template for environment variables
@@ -781,7 +944,7 @@ ecosentinel/
 ## ✅ Running Tests
 
 ```bash
-# Fast offline tests (anomaly math, causal engine, LSTM, Gemini agent, OpenAQ calls): no network needed
+# Fast offline tests (anomaly math, causal engine, LSTM, Gemini agent, OpenAQ calls, warehouse): no network needed
 python -m pytest tests/ --ignore=tests/test_tools.py -v
 
 # Full suite, including tool tests that call the live APIs
@@ -793,8 +956,9 @@ python -m pytest tests/ -v
 | `test_anomaly.py` | Z-score math, mean, std, and severity thresholds | No |
 | `test_causal.py` | DAG building, graceful fallback, probability bounds, strong vs weak signals, refutation output (synthetic data) | No |
 | `test_forecast.py` | LSTM shapes, scaling round-trip, risk labels | No |
-| `test_agent.py` | Agent model and retry settings, the causal guardrail, and that ADK finds all 7 MCP tools (no Gemini calls) | No |
-| `test_openaq.py` | OpenAQ calls use valid v3 parameters, page past 1000 rows, report only fresh readings, and hide physically implausible CO values (fake OpenAQ) | No |
+| `test_agent.py` | Agent model and retry settings, the causal guardrail, and that ADK finds all 8 MCP tools (no Gemini calls) | No |
+| `test_openaq.py` | OpenAQ calls use valid v3 parameters, page past 1000 rows, pick a live sensor over a dead one at the same station, report only fresh readings, and hide physically implausible CO values (fake OpenAQ) | No |
+| `test_warehouse.py` | Loads add only new, non-duplicate rows; trend summaries weight days by readings, skip partial days for worst/cleanest, and compute week-over-week change | No |
 | `test_tools.py` | Air quality, weather risk, and wildfires for real and unknown cities | Yes |
 
 ---
@@ -806,7 +970,7 @@ MIT. See [LICENSE](LICENSE) for details.
 Thanks to:
 
 - **Anthropic** for the Model Context Protocol
-- **Google** for the Agent Development Kit and Gemini
+- **Google** for the Agent Development Kit, Gemini, and BigQuery
 - **OpenAQ** for open, global air quality data
 - **NASA FIRMS** for satellite wildfire detection
 - **Open-Meteo** for free, no-key weather and air quality data

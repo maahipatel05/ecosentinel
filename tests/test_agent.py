@@ -22,6 +22,7 @@ EXPECTED_TOOLS = {
     "detect_anomaly_tool",
     "get_causal_attribution",
     "get_forecast",
+    "get_pm25_trends",
 }
 
 # ── Agent configuration ────────────────────────────────────────────────────────

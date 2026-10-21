@@ -798,12 +798,94 @@ async def get_forecast(city: str) -> str:
     return "\n".join(lines)
 
 
+# ── Tool 8: PM2.5 Trends (BigQuery warehouse) ─────────────────────────────────
+
+
+@mcp.tool()
+async def get_pm25_trends(city: str, days: int = 30) -> str:
+    """
+    Show how a city's PM2.5 has changed day by day, using EcoSentinel's
+    BigQuery warehouse of stored sensor history.
+
+    Refreshes the city's recent OpenAQ readings into BigQuery (adding only
+    new ones), then runs SQL for daily averages and peaks. Reports the
+    overall average, worst and cleanest days, the highest single reading,
+    and the latest 7 days of data vs the 7 days before.
+
+    Use this for questions about trends, history, or whether air quality
+    is getting better or worse. For current conditions use get_air_quality.
+
+    Args:
+        city: City name, e.g. 'Ahmedabad', 'Delhi', 'Los Angeles'
+        days: How many days back to analyse (1 to 60, default 30)
+    """
+    from warehouse import get_daily_trends, summarize_trends
+
+    days = max(1, min(days, 60))  # sandbox tables expire after 60 days
+
+    try:
+        result = await get_daily_trends(city, days)
+    except ValueError as e:
+        return f"❌ {e}"
+    except Exception as e:
+        return f"❌ BigQuery warehouse error: {e}"
+
+    load, daily = result["load"], result["daily"]
+    summary = summarize_trends(daily)
+    name = load["city"]
+
+    if summary is None:
+        return (
+            f"## 📈 PM2.5 Trends: {name}\n\n"
+            f"⚠️ No stored PM2.5 readings for the last {days} days. "
+            f"{load.get('message', '')}".strip()
+        )
+
+    lines = [
+        f"## 📈 PM2.5 Trends: {name}",
+        f"*BigQuery warehouse | last {days} days | {summary['days_with_data']} days "
+        f"with data, {summary['readings']:,} readings | newest data: {summary['latest_day']}*",
+        "",
+        f"**Average PM2.5**: {summary['overall_avg']} µg/m³",
+    ]
+
+    if summary["change_pct"] is not None:
+        direction = "worse" if summary["change_pct"] > 0 else "better"
+        lines.append(
+            f"**Latest 7 days vs previous 7**: {summary['recent_7_avg']} vs "
+            f"{summary['previous_7_avg']} µg/m³ "
+            f"({summary['change_pct']:+.1f}%, {direction})"
+        )
+
+    worst, clean, peak = summary["worst_day"], summary["cleanest_day"], summary["peak_reading"]
+    lines += [
+        f"**Worst day**: {worst['day']} (average {worst['avg_pm25']} µg/m³)",
+        f"**Cleanest day**: {clean['day']} (average {clean['avg_pm25']} µg/m³)",
+        f"**Highest single reading**: {peak['max_pm25']} µg/m³ on {peak['day']}",
+        "",
+        "**Daily averages (most recent 14 days with data):**",
+    ]
+    for d in daily[-14:]:
+        lines.append(
+            f"  • {d['day']}: {d['avg_pm25']} µg/m³ "
+            f"(peak {d['max_pm25']}, {d['readings']} readings)"
+        )
+
+    lines += [
+        "",
+        f"*Refresh: {load.get('loaded', 0)} new readings added to BigQuery this run.*",
+        "*Source: OpenAQ sensor history stored in Google BigQuery*",
+    ]
+    return "\n".join(lines)
+
+
 # ── Entry point ────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
     print("🌍 EcoSentinel MCP Server starting...")
     print(
         "   Tools: get_air_quality, get_wildfires, get_weather_risk, "
-        "get_crisis_summary, detect_anomaly_tool, get_causal_attribution, get_forecast"
+        "get_crisis_summary, detect_anomaly_tool, get_causal_attribution, get_forecast, "
+        "get_pm25_trends"
     )
     mcp.run(transport="stdio")
