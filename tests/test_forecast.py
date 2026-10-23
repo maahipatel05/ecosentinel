@@ -24,6 +24,7 @@ from forecast import (
     MODEL_PATH,
     normalize,
     denormalize_pm25,
+    hourly_to_daily,
     _risk_label,
 )
 
@@ -86,6 +87,28 @@ def test_normalize_midpoint():
     data   = np.array([[250.0, 25.0, 15.0]], dtype=np.float32)
     normed = normalize(data, scaler)
     assert abs(normed[0, 0] - 0.5) < 1e-4
+
+
+# ── Hourly → daily averaging ───────────────────────────────────────────────────
+
+FREEZING_DAY = [f"2024-01-07T{h:02d}:00" for h in range(4)]
+
+
+def test_daily_keeps_fully_freezing_day_for_temperature():
+    # Real 2024 case: Seoul and Krakow each had 11 days entirely below 0°C,
+    # which the old filter deleted from the data
+    daily = hourly_to_daily(FREEZING_DAY, [-6.0, -4.0, -2.0, -4.0], allow_negative=True)
+    assert daily == {"2024-01-07": -4.0}
+
+
+def test_daily_partly_freezing_day_is_not_warm_biased():
+    daily = hourly_to_daily(FREEZING_DAY, [-3.0, -1.0, 1.0, 3.0], allow_negative=True)
+    assert daily["2024-01-07"] == 0.0  # old filter averaged only 1 and 3 → 2.0
+
+
+def test_daily_drops_negative_pm25_readings():
+    daily = hourly_to_daily(FREEZING_DAY, [20.0, -999.0, 40.0, None])
+    assert daily["2024-01-07"] == 30.0
 
 
 # ── Risk labels ────────────────────────────────────────────────────────────────

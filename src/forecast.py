@@ -134,6 +134,27 @@ async def _geocode(city: str) -> tuple[float, float, str]:
     return hit["latitude"], hit["longitude"], name
 
 
+def hourly_to_daily(
+    times: list, values: list, allow_negative: bool = False
+) -> dict[str, float]:
+    """
+    Average hourly values into daily means, keyed by "YYYY-MM-DD".
+
+    Negative values are dropped unless allow_negative=True. That suits
+    PM2.5 and wind (a negative reading is a sensor error) but NOT
+    temperature: dropping sub-zero hours used to delete every fully
+    freezing day (11 in both Seoul and Krakow in 2024) and make partly
+    freezing days look warmer than they were. Shared with the training
+    notebook so training and inference average data identically.
+    """
+    by_date: dict[str, list[float]] = {}
+    for t, v in zip(times, values):
+        if v is None or (v < 0 and not allow_negative):
+            continue
+        by_date.setdefault(t[:10], []).append(float(v))
+    return {d: float(np.mean(vs)) for d, vs in by_date.items()}
+
+
 async def _fetch_recent_days(lat: float, lon: float) -> np.ndarray:
     """
     Fetch the last SEQ_LEN days of PM2.5, wind speed, and temperature.
@@ -173,19 +194,11 @@ async def _fetch_recent_days(lat: float, lon: float) -> np.ndarray:
             f"Open-Meteo error: AQ={r_aq.status_code} WX={r_wx.status_code}"
         )
 
-    def _hourly_to_daily(times: list, values: list) -> dict[str, float]:
-        by_date: dict[str, list[float]] = {}
-        for t, v in zip(times, values):
-            if v is None or v < 0:
-                continue
-            by_date.setdefault(t[:10], []).append(float(v))
-        return {d: float(np.mean(vs)) for d, vs in by_date.items()}
-
     aq_h   = r_aq.json()["hourly"]
     wx_h   = r_wx.json()["hourly"]
-    pm25_d = _hourly_to_daily(aq_h["time"], aq_h["pm2_5"])
-    wind_d = _hourly_to_daily(wx_h["time"], wx_h["wind_speed_10m"])
-    temp_d = _hourly_to_daily(wx_h["time"], wx_h["temperature_2m"])
+    pm25_d = hourly_to_daily(aq_h["time"], aq_h["pm2_5"])
+    wind_d = hourly_to_daily(wx_h["time"], wx_h["wind_speed_10m"])
+    temp_d = hourly_to_daily(wx_h["time"], wx_h["temperature_2m"], allow_negative=True)
 
     common_dates = sorted(set(pm25_d) & set(wind_d) & set(temp_d))
     rows = [[pm25_d[d], wind_d[d], temp_d[d]] for d in common_dates]
