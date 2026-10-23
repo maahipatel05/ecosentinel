@@ -1,0 +1,152 @@
+{
+  "run_timestamp": "2026-10-23T19:50:09.899868+00:00",
+  "config": {
+    "data_window": [
+      "2024-01-01",
+      "2024-12-31"
+    ],
+    "cities": [
+      "Delhi",
+      "Los Angeles",
+      "Seoul",
+      "Krakow"
+    ],
+    "seq_len": 30,
+    "split": "per city, by time: 80% train / 10% val / 10% test",
+    "seed": 42,
+    "source": "Open-Meteo CAMS air quality + weather archive (daily means)"
+  },
+  "test_days": 136,
+  "overall": [
+    {
+      "model": "Persistence (same as today)",
+      "mae": 15.274,
+      "rmse": 21.046,
+      "mape": 39.34
+    },
+    {
+      "model": "Seasonal naive (same day last week)",
+      "mae": 26.015,
+      "rmse": 37.296,
+      "mape": 63.07
+    },
+    {
+      "model": "7-day rolling average",
+      "mae": 18.429,
+      "rmse": 26.374,
+      "mape": 50.79
+    },
+    {
+      "model": "LSTM (ours)",
+      "mae": 14.67,
+      "rmse": 21.232,
+      "mape": 37.16
+    }
+  ],
+  "per_city": {
+    "Delhi": [
+      {
+        "model": "Persistence (same as today)",
+        "mae": 24.558,
+        "rmse": 30.621,
+        "mape": 25.77
+      },
+      {
+        "model": "Seasonal naive (same day last week)",
+        "mae": 47.614,
+        "rmse": 58.25,
+        "mape": 53.07
+      },
+      {
+        "model": "7-day rolling average",
+        "mae": 31.448,
+        "rmse": 39.587,
+        "mape": 35.61
+      },
+      {
+        "model": "LSTM (ours)",
+        "mae": 27.789,
+        "rmse": 33.233,
+        "mape": 27.86
+      }
+    ],
+    "Los Angeles": [
+      {
+        "model": "Persistence (same as today)",
+        "mae": 8.956,
+        "rmse": 11.887,
+        "mape": 38.39
+      },
+      {
+        "model": "Seasonal naive (same day last week)",
+        "mae": 10.766,
+        "rmse": 12.819,
+        "mape": 43.92
+      },
+      {
+        "model": "7-day rolling average",
+        "mae": 8.725,
+        "rmse": 10.539,
+        "mape": 38.7
+      },
+      {
+        "model": "LSTM (ours)",
+        "mae": 7.332,
+        "rmse": 9.983,
+        "mape": 31.81
+      }
+    ],
+    "Seoul": [
+      {
+        "model": "Persistence (same as today)",
+        "mae": 10.98,
+        "rmse": 14.405,
+        "mape": 48.77
+      },
+      {
+        "model": "Seasonal naive (same day last week)",
+        "mae": 13.442,
+        "rmse": 17.983,
+        "mape": 66.3
+      },
+      {
+        "model": "7-day rolling average",
+        "mae": 10.932,
+        "rmse": 14.092,
+        "mape": 56.91
+      },
+      {
+        "model": "LSTM (ours)",
+        "mae": 9.132,
+        "rmse": 12.149,
+        "mape": 44.81
+      }
+    ],
+    "Krakow": [
+      {
+        "model": "Persistence (same as today)",
+        "mae": 16.423,
+        "rmse": 21.761,
+        "mape": 45.32
+      },
+      {
+        "model": "Seasonal naive (same day last week)",
+        "mae": 31.851,
+        "rmse": 40.451,
+        "mape": 90.74
+      },
+      {
+        "model": "7-day rolling average",
+        "mae": 22.411,
+        "rmse": 29.803,
+        "mape": 73.6
+      },
+      {
+        "model": "LSTM (ours)",
+        "mae": 14.079,
+        "rmse": 20.811,
+        "mape": 45.04
+      }
+    ]
+  }
+}
