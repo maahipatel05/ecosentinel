@@ -468,18 +468,22 @@ flowchart LR
 
 ### 📊 Results on held-out test days
 
-136 test days (late November to December 2024, the last 10% of each city),
+140 test days (November 27 to December 31, 2024, the last 10% of each city),
 never seen during training. MAE is the average error in µg/m³; lower is better.
 Full scores (RMSE, MAPE, per city) are in
 [`data/eval_results/forecast_results.json`](data/eval_results/forecast_results.json).
 
 | City | Persistence | Seasonal naive | 7-day average | **LSTM** | LSTM vs best baseline |
 |---|---:|---:|---:|---:|:---:|
-| Los Angeles | 8.96 | 10.77 | 8.72 | **7.33** | ✅ 16% lower |
-| Seoul | 10.98 | 13.44 | 10.93 | **9.13** | ✅ 16% lower |
-| Krakow | 16.42 | 31.85 | 22.41 | **14.08** | ✅ 14% lower |
-| Delhi | **24.56** | 47.61 | 31.45 | 27.79 | ❌ 13% higher |
-| **Overall** | 15.27 | 26.02 | 18.43 | **14.67** | ✅ 4% lower |
+| Seoul | 9.69 | 15.07 | 9.89 | **7.72** | ✅ 20% lower |
+| Los Angeles | 8.96 | 10.77 | 8.72 | **7.79** | ✅ 11% lower |
+| Krakow | 17.23 | 31.28 | 22.43 | **15.43** | ✅ 10% lower |
+| Delhi | **24.56** | 47.61 | 31.45 | 28.86 | ❌ 18% higher |
+| **Overall** | 15.11 | 26.18 | 18.12 | **14.95** | ✅ 1% lower |
+
+The LSTM also has the lowest percentage error overall (MAPE 33.9% vs 39.0% for
+persistence), but a slightly higher RMSE (21.98 vs 20.94), driven by large
+misses in Delhi.
 
 **Why Delhi is the exception:** the test window is Delhi's peak smog season,
 with PM2.5 above the highest value in the training data (172.3 µg/m³). The
