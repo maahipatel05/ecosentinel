@@ -456,13 +456,15 @@ flowchart LR
 - **Training** happens in Google Colab with
   [`notebooks/EcoSentinel_Phase6_Training.ipynb`](notebooks/EcoSentinel_Phase6_Training.ipynb),
   on 1 year of daily PM2.5 and weather data from Open-Meteo (CAMS) for Delhi,
-  Los Angeles, Seoul, and Krakow. The notebook compares the model with
-  persistence and rolling-average baselines on a held-out test set.
+  Los Angeles, Seoul, and Krakow. Each city is split by time (first 80% of days
+  to train, next 10% to validate, last 10% to test), and the notebook scores
+  the model against persistence, seasonal-naive, and 7-day rolling-average
+  baselines, overall and per city.
 - **Inference** in `src/forecast.py` loads the weights (`data/model/lstm_pm25.pt`)
   and scaler (`data/model/scaler.json`), fetches the city's last 30 days, and
   returns the prediction with a risk level.
-- 📦 The weights file is git-ignored. To use `get_forecast`, run the notebook
-  and put `lstm_pm25.pt` in `data/model/`.
+- 📦 To use `get_forecast`, run the notebook and put `lstm_pm25.pt` and
+  `scaler.json` in `data/model/`.
 
 ---
 
