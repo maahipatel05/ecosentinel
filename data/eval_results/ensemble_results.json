@@ -1,0 +1,137 @@
+{
+  "run_timestamp": "2026-10-24T01:25:55.117331+00:00",
+  "method": "equal-weight average of LSTM and TimesFM 2.5 zero-shot predictions; no tuning",
+  "test_days": 140,
+  "overall": [
+    {
+      "model": "Persistence (same as today)",
+      "mae": 15.108,
+      "rmse": 20.937,
+      "mape": 39.03
+    },
+    {
+      "model": "LSTM (ours)",
+      "mae": 14.948,
+      "rmse": 21.985,
+      "mape": 33.93
+    },
+    {
+      "model": "TimesFM 2.5 (zero-shot)",
+      "mae": 15.071,
+      "rmse": 21.615,
+      "mape": 38.11
+    },
+    {
+      "model": "Ensemble (average of LSTM and TimesFM)",
+      "mae": 14.623,
+      "rmse": 21.067,
+      "mape": 35.35
+    }
+  ],
+  "per_city": {
+    "Delhi": [
+      {
+        "model": "Persistence (same as today)",
+        "mae": 24.558,
+        "rmse": 30.621,
+        "mape": 25.77
+      },
+      {
+        "model": "LSTM (ours)",
+        "mae": 28.855,
+        "rmse": 34.804,
+        "mape": 28.14
+      },
+      {
+        "model": "TimesFM 2.5 (zero-shot)",
+        "mae": 26.798,
+        "rmse": 32.833,
+        "mape": 29.24
+      },
+      {
+        "model": "Ensemble (average of LSTM and TimesFM)",
+        "mae": 26.852,
+        "rmse": 32.183,
+        "mape": 27.49
+      }
+    ],
+    "Los Angeles": [
+      {
+        "model": "Persistence (same as today)",
+        "mae": 8.956,
+        "rmse": 11.887,
+        "mape": 38.39
+      },
+      {
+        "model": "LSTM (ours)",
+        "mae": 7.788,
+        "rmse": 10.299,
+        "mape": 30.89
+      },
+      {
+        "model": "TimesFM 2.5 (zero-shot)",
+        "mae": 8.164,
+        "rmse": 10.381,
+        "mape": 34.75
+      },
+      {
+        "model": "Ensemble (average of LSTM and TimesFM)",
+        "mae": 7.857,
+        "rmse": 10.18,
+        "mape": 32.34
+      }
+    ],
+    "Seoul": [
+      {
+        "model": "Persistence (same as today)",
+        "mae": 9.692,
+        "rmse": 13.037,
+        "mape": 39.84
+      },
+      {
+        "model": "LSTM (ours)",
+        "mae": 7.719,
+        "rmse": 10.932,
+        "mape": 31.26
+      },
+      {
+        "model": "TimesFM 2.5 (zero-shot)",
+        "mae": 8.498,
+        "rmse": 11.659,
+        "mape": 34.91
+      },
+      {
+        "model": "Ensemble (average of LSTM and TimesFM)",
+        "mae": 7.913,
+        "rmse": 11.007,
+        "mape": 32.49
+      }
+    ],
+    "Krakow": [
+      {
+        "model": "Persistence (same as today)",
+        "mae": 17.228,
+        "rmse": 22.462,
+        "mape": 52.14
+      },
+      {
+        "model": "LSTM (ours)",
+        "mae": 15.431,
+        "rmse": 22.283,
+        "mape": 45.43
+      },
+      {
+        "model": "TimesFM 2.5 (zero-shot)",
+        "mae": 16.824,
+        "rmse": 23.39,
+        "mape": 53.55
+      },
+      {
+        "model": "Ensemble (average of LSTM and TimesFM)",
+        "mae": 15.869,
+        "rmse": 22.687,
+        "mape": 49.06
+      }
+    ]
+  }
+}

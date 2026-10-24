@@ -36,7 +36,7 @@ weather. On top of that data it does four things a chatbot can't do on its own:
 |:---:|---|---|---|
 | 📊 | **Detect** | *Is today's pollution unusual for this city?* | Z-score against the city's own 30-day history |
 | 🧭 | **Explain** | *Is the wildfire actually causing it, or is it just nearby?* | Causal inference with DoWhy |
-| 🔮 | **Predict** | *What will PM2.5 be tomorrow?* | A stacked LSTM trained in PyTorch |
+| 🔮 | **Predict** | *What will PM2.5 be tomorrow?* | A stacked LSTM trained in PyTorch, benchmarked against Google's TimesFM |
 | 📈 | **Track** | *Is the air getting better or worse?* | SQL over sensor history stored in Google BigQuery |
 
 The same server plugs into **two different AI clients without changing a line
@@ -64,7 +64,7 @@ Development Kit (ADK).
 5. [The Tools](#-the-tools)
 6. [Anomaly Detection](#-anomaly-detection)
 7. [Causal Inference](#-causal-inference)
-8. [LSTM Forecasting](#-lstm-forecasting)
+8. [Forecasting: LSTM vs TimesFM](#-forecasting-lstm-vs-timesfm)
 9. [Gemini Agent with Google ADK](#-gemini-agent-with-google-adk)
 10. [BigQuery Warehouse on Google Cloud](#-bigquery-warehouse-on-google-cloud)
 11. [Getting Started](#-getting-started)
@@ -424,10 +424,12 @@ FIRMS response doesn't break the analysis.
 
 ---
 
-## 🔮 LSTM Forecasting
+## 🔮 Forecasting: LSTM vs TimesFM
 
 `get_forecast` predicts **tomorrow's PM2.5** for any city using a stacked LSTM
-(a neural network built for sequences) written in PyTorch.
+(a neural network built for sequences) written in PyTorch, with 30,241 parameters.
+It is benchmarked against simple baselines and against **Google's TimesFM 2.5**,
+a 231M-parameter pre-trained forecasting model, on the same held-out days.
 
 ```mermaid
 flowchart LR
@@ -465,31 +467,55 @@ flowchart LR
   returns the prediction with a risk level.
 - 📦 To use `get_forecast`, run the notebook and put `lstm_pm25.pt` and
   `scaler.json` in `data/model/`.
+- **TimesFM comparison** runs in
+  [`notebooks/EcoSentinel_TimesFM_ZeroShot.ipynb`](notebooks/EcoSentinel_TimesFM_ZeroShot.ipynb):
+  it loads the exact saved test set (`data/eval_results/forecast_test_set.npz`),
+  forecasts each day zero-shot (no training on air-quality data) from the previous
+  30 days of PM2.5, and checks that the baseline and LSTM scores match the saved
+  ones, so every model is graded on identical days.
+- **Ensemble:** [`scripts/eval_ensemble.py`](scripts/eval_ensemble.py) averages the
+  LSTM's and TimesFM's saved predictions (equal weights, nothing tuned on the test
+  set).
 
-### 📊 Results on held-out test days
+### 📊 Results on 140 held-out test days
 
-140 test days (November 27 to December 31, 2024, the last 10% of each city),
-never seen during training. MAE is the average error in µg/m³; lower is better.
-Full scores (RMSE, MAPE, per city) are in
-[`data/eval_results/forecast_results.json`](data/eval_results/forecast_results.json).
+November 27 to December 31, 2024 (the last 10% of each city), never seen during
+training. MAE is the average error in µg/m³; lower is better.
 
-| City | Persistence | Seasonal naive | 7-day average | **LSTM** | LSTM vs best baseline |
-|---|---:|---:|---:|---:|:---:|
-| Seoul | 9.69 | 15.07 | 9.89 | **7.72** | ✅ 20% lower |
-| Los Angeles | 8.96 | 10.77 | 8.72 | **7.79** | ✅ 11% lower |
-| Krakow | 17.23 | 31.28 | 22.43 | **15.43** | ✅ 10% lower |
-| Delhi | **24.56** | 47.61 | 31.45 | 28.86 | ❌ 18% higher |
-| **Overall** | 15.11 | 26.18 | 18.12 | **14.95** | ✅ 1% lower |
+| City | Persistence | 7-day average | **LSTM** | **TimesFM 2.5** (zero-shot) | **Ensemble** | Best |
+|---|---:|---:|---:|---:|---:|---|
+| Seoul | 9.69 | 9.89 | **7.72** | 8.50 | 7.91 | LSTM |
+| Los Angeles | 8.96 | 8.72 | **7.79** | 8.16 | 7.86 | LSTM |
+| Krakow | 17.23 | 22.43 | **15.43** | 16.82 | 15.87 | LSTM |
+| Delhi | **24.56** | 31.45 | 28.86 | 26.80 | 26.85 | Persistence |
+| **Overall** | 15.11 | 18.12 | 14.95 | 15.07 | **14.62** | Ensemble |
 
-The LSTM also has the lowest percentage error overall (MAPE 33.9% vs 39.0% for
-persistence), but a slightly higher RMSE (21.98 vs 20.94), driven by large
-misses in Delhi.
+Seasonal naive (same weekday last week) was the worst forecaster in every city
+(26.18 overall). Full MAE, RMSE, and MAPE per city are in
+[`forecast_results.json`](data/eval_results/forecast_results.json),
+[`timesfm_zeroshot_results.json`](data/eval_results/timesfm_zeroshot_results.json), and
+[`ensemble_results.json`](data/eval_results/ensemble_results.json).
 
-**Why Delhi is the exception:** the test window is Delhi's peak smog season,
-with PM2.5 above the highest value in the training data (172.3 µg/m³). The
-LSTM under-predicts levels it has never seen, while persistence simply copies
-yesterday's high value. This is distribution shift: the test days look
-different from anything in the training data.
+**What the numbers show:**
+
+- **The small, specialized model beat the big general one in 3 of 4 cities.** The
+  LSTM (30,241 parameters) was trained on these cities and sees wind and
+  temperature; zero-shot TimesFM (231M parameters) sees only PM2.5 and was never
+  trained on air-quality data. TimesFM still beat every simple baseline in Seoul,
+  Los Angeles, and Krakow.
+- **Delhi is the exception for every model.** The test window is Delhi's peak smog
+  season, with PM2.5 above the highest value in the training data (172.3 µg/m³).
+  The LSTM under-predicts levels it has never seen; TimesFM handles this better
+  (26.80 vs 28.86), but no model beats persistence, which simply copies
+  yesterday's high value. This is distribution shift.
+- **Averaging the two models gives the best overall result:** MAE 14.62, 2.2% lower
+  than the LSTM and 3.2% lower than persistence, with lower RMSE than either model
+  (21.07 vs 21.98 for the LSTM and 21.61 for TimesFM; persistence has the lowest
+  RMSE at 20.94).
+- **TimesFM's uncertainty ranges are well calibrated:** its 80% prediction interval
+  contained the real value on 80.0% of test days (71% to 89% per city).
+
+`get_forecast` currently serves the LSTM.
 
 ---
 
@@ -905,12 +931,14 @@ ecosentinel/
 │       ├── __init__.py  # Lets ADK discover the agent
 │       └── agent.py     # Gemini agent wired to the MCP server via McpToolset
 ├── notebooks/
-│   └── EcoSentinel_Phase6_Training.ipynb  # Colab notebook: LSTM training + evaluation
+│   ├── EcoSentinel_Phase6_Training.ipynb  # Colab notebook: LSTM training + evaluation
+│   └── EcoSentinel_TimesFM_ZeroShot.ipynb # Colab notebook: TimesFM 2.5 zero-shot on the same test set
 ├── data/
 │   ├── model/           # scaler.json (+ lstm_pm25.pt, git-ignored)
 │   └── eval_results/    # Anomaly-detector evaluation runs (JSON)
 ├── scripts/
 │   ├── load_cities.py   # Loads 30 days of PM2.5 history for 15 cities into BigQuery
+│   ├── eval_ensemble.py # Scores the LSTM + TimesFM average from saved predictions
 │   ├── eval_anomaly.py  # Evaluates the z-score detector against EPA thresholds
 │   └── debug_openaq.py  # OpenAQ debugging helper
 ├── tests/
