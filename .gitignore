@@ -39,3 +39,6 @@ data/model/*.pth
 
 # Google ADK local session history (created by adk web)
 .adk/
+
+# LoRA adapter folder/zip from the TimesFM fine-tuning notebook
+timesfm_lora_adapter*
